@@ -1,20 +1,27 @@
 #![allow(clippy::forget_copy)]
 
-use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bindings::Windows::Win32::Foundation::{
-    self, CLASS_E_CLASSNOTAVAILABLE, E_FAIL, E_INVALIDARG, HINSTANCE, HWND, RECT, S_FALSE, S_OK,
+    self, CLASS_E_CLASSNOTAVAILABLE, E_FAIL, E_INVALIDARG, HINSTANCE, HWND, LPARAM, LRESULT, PSTR,
+    RECT, S_FALSE, S_OK, WPARAM,
 };
 use bindings::Windows::Win32::Foundation::{BOOL, E_NOTIMPL};
 use bindings::Windows::Win32::Storage::StructuredStorage::IStream;
 use bindings::Windows::Win32::System::Com::IOleWindow;
+use bindings::Windows::Win32::UI::Controls::{
+    TCIF_STATE, TCIF_TEXT, TCIS_HIGHLIGHTED, TCITEMA, TCM_INSERTITEMA, TCM_SETITEMA,
+    TCS_FOCUSNEVER, TCS_SINGLELINE,
+};
 use bindings::Windows::Win32::UI::Shell::{
     IInputObjectSite, DBIMF_NORMAL, DBIM_ACTUAL, DBIM_BKCOLOR, DBIM_MAXSIZE, DBIM_MINSIZE,
     DBIM_MODEFLAGS, DBIM_TITLE, DESKBANDINFO,
 };
 
+use bindings::Windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExA, SendMessageA, SendMessageW, HMENU, WINDOW_EX_STYLE, WINDOW_STYLE, WS_CHILD,
+    WS_CLIPSIBLINGS, WS_VISIBLE,
+};
 use bindings::*;
 use windows::*;
 
@@ -26,61 +33,66 @@ const EXT_TAB_GUID: Guid = Guid::from_values(
     [0xb2, 0xcf, 0xc0, 0x0b, 0x18, 0x2b, 0xc3, 0x2a],
 );
 
+static mut DLL_INSTANCE: Option<HINSTANCE> = None;
+
 struct WindowHandler {
-    tabs_container: Rc<nwg::TabsContainer>,
-    tabs: Vec<Rc<nwg::Tab>>,
     handle: HWND,
 }
 
 impl WindowHandler {
     fn init(parent: HWND) -> WindowHandler {
-        log::info!("Building Tab container");
-        let mut window = Default::default();
-        let parent_handle =
-            nwg::ControlHandle::Hwnd(parent.0 as *mut winapi::shared::windef::HWND__);
+        let handle = unsafe {
+            CreateWindowExA(
+                WINDOW_EX_STYLE(0),
+                "SysTabControl32",
+                "",
+                WS_CHILD
+                    | WS_CLIPSIBLINGS
+                    | WS_VISIBLE
+                    | WINDOW_STYLE(TCS_FOCUSNEVER)
+                    | WINDOW_STYLE(TCS_SINGLELINE),
+                0,
+                0,
+                200,
+                25,
+                parent,
+                HMENU(0),
+                DLL_INSTANCE.unwrap(),
+                std::ptr::null(),
+            )
+        };
 
-        nwg::TabsContainer::builder()
-            .parent(&parent_handle)
-            .size((200, 50))
-            .build(&mut window)
-            .map_err(|op| {
-                log::error!("Error building window: {}", op);
-                op
-            })
-            .unwrap();
-        log::info!("Building Tab Container: OK");
-        let window = Rc::new(window);
-        WindowHandler {
-            tabs_container: window.clone(),
-            handle: match window.handle {
-                nwg::ControlHandle::Hwnd(n) => HWND(n as isize),
-                _ => panic!(),
-            },
-            tabs: Default::default(),
-        }
+        log::warn!("TabBar created {:?}", handle);
+        WindowHandler { handle }
     }
 
-    fn add_tab(&mut self, title: &str) {
-        log::info!("Adding tab");
-        let mut tab = Default::default();
-        let container = self.tabs_container.handle;
-        log::error!("tabcontainer addr: {:?}", self.tabs_container.handle.hwnd());
-        let builder = nwg::Tab::builder().parent(&container).text(title);
-        log::info!("Adding tab: Builder initialized");
-        let built = builder.build(&mut tab);
-        log::info!("Adding tab: Builder");
+    fn add_tab(&mut self, title: &mut str, idx: usize) {
+        let tab_info = TCITEMA {
+            mask: TCIF_STATE | TCIF_TEXT,
+            dwState: 0,
+            dwStateMask: TCIS_HIGHLIGHTED,
+            pszText: PSTR(title.as_mut_ptr()),
+            cchTextMax: 0,
+            iImage: 0,
+            lParam: LPARAM(0),
+        };
+        unsafe {
+            let result = SendMessageA(
+                &self.handle,
+                TCM_INSERTITEMA,
+                WPARAM(idx),
+                LPARAM(std::ptr::addr_of!(tab_info) as isize),
+            );
 
-        built
-            .map_err(|op| {
-                log::error!("Error building window: {} - Code:{}", op, unsafe {
-                    winapi::um::errhandlingapi::GetLastError()
-                });
-                op
-            })
-            .unwrap();
-        log::info!("Adding tab: Tab built");
-        self.tabs.push(Rc::new(tab));
-        log::info!("Adding tab: OK");
+            log::info!("Added tab done, result:{:?}", result);
+            let result = SendMessageA(
+                &self.handle,
+                TCM_SETITEMA,
+                WPARAM(idx),
+                LPARAM(std::ptr::addr_of!(tab_info) as isize),
+            );
+            log::info!("Added tab done, result:{:?}", result);
+        }
     }
 }
 
@@ -140,7 +152,8 @@ impl DeskBand {
                 (|| -> Result<HWND> { p_unk_site.cast::<IOleWindow>()?.GetWindow() })().ok();
             if let Some(parent) = self.parent_window_handle {
                 let mut window = WindowHandler::init(parent);
-                //window.add_tab("test longer test");
+                window.add_tab(&mut String::from("long tab name aaaa\0"), 0);
+                window.add_tab(&mut String::from("another long tab bane\0"), 1);
                 //window.add_tab("test2");
                 self.window = Some(window);
             }
@@ -287,8 +300,12 @@ pub extern "system" fn DllMain(
             .apply()
             .unwrap();
         log::info!("Attached");
-        nwg::init().unwrap();
-        log::info!("Nwg init");
+        std::panic::set_hook(Box::new(|info| log::error!("PANIC ! {:?}", info)));
+
+        // Make this safe at some  point probably
+        unsafe {
+            DLL_INSTANCE = Some(_instance);
+        }
     }
     true.into()
 }

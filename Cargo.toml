@@ -10,10 +10,10 @@ bindings = { path = "bindings" }
 chrono = "0.4.19"
 fern = "0.6.0"
 log = "0.4.14"
-nwg = { version = "1.0.12", package = "native-windows-gui" }
-winapi = "0.3.9"
 windows = "0.21.1"
 
 
 [lib]
 crate-type = ["cdylib"]
+
+[features]
