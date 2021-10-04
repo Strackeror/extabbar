@@ -34,7 +34,7 @@ struct DeskBand {
     p_site: Option<Rc<IUnknown>>,
     p_input_object_site: Option<Rc<IInputObjectSite>>,
 
-    window: Option<tabs::WindowHandler>,
+    window: Option<tabs::TabBar>,
 }
 
 #[allow(non_snake_case)]
@@ -80,9 +80,12 @@ impl DeskBand {
             self.parent_window_handle =
                 (|| -> Result<HWND> { p_unk_site.cast::<IOleWindow>()?.GetWindow() })().ok();
             if let Some(parent) = self.parent_window_handle {
-                let mut window = tabs::WindowHandler::init(parent);
-                window.add_tab(&mut String::from("long tab name aaaa\0"), 0);
-                window.add_tab(&mut String::from("another long tab bane\0"), 1);
+                let window = tabs::TabBar::new(parent);
+                window
+                    .0
+                    .borrow_mut()
+                    .add_tab("title\0".to_owned().as_mut_str(), 0)
+                    .unwrap();
                 //window.add_tab("test2");
                 self.window = Some(window);
             }
@@ -103,7 +106,7 @@ impl DeskBand {
     pub unsafe fn GetWindow(&self) -> Result<HWND> {
         log::info!("Get window");
         match &self.window {
-            Some(window) => Ok(window.handle),
+            Some(window) => Ok((*window.0).borrow().handle),
             None => Err(E_FAIL.into()),
         }
     }
