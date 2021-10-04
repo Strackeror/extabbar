@@ -4,19 +4,13 @@ mod tabs;
 
 use std::rc::Rc;
 
-use bindings::Windows::Win32::Foundation::{
-    self, CLASS_E_CLASSNOTAVAILABLE, E_FAIL, E_INVALIDARG, HINSTANCE, HWND, RECT, S_FALSE, S_OK,
-};
-use bindings::Windows::Win32::Foundation::{BOOL, E_NOTIMPL};
-use bindings::Windows::Win32::Storage::StructuredStorage::IStream;
-use bindings::Windows::Win32::System::Com::IOleWindow;
-use bindings::Windows::Win32::UI::Shell::{
-    IInputObjectSite, DBIMF_NORMAL, DBIM_ACTUAL, DBIM_BKCOLOR, DBIM_MAXSIZE, DBIM_MINSIZE,
-    DBIM_MODEFLAGS, DBIM_TITLE, DESKBANDINFO,
-};
-
 use bindings::*;
 use windows::*;
+
+use bindings::Windows::Win32::Foundation::*;
+use bindings::Windows::Win32::Storage::StructuredStorage::IStream;
+use bindings::Windows::Win32::System::Com::IOleWindow;
+use bindings::Windows::Win32::UI::Shell::*;
 
 // {9ecce421-925a-4484-b2cf-c00b182bc32a}
 const EXT_TAB_GUID: Guid = Guid::from_values(
@@ -186,7 +180,7 @@ impl ClassFactory {
         object: *mut RawPtr,
     ) -> HRESULT {
         if outer.is_some() {
-            return Foundation::CLASS_E_NOAGGREGATION;
+            return CLASS_E_NOAGGREGATION;
         }
 
         unsafe {

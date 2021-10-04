@@ -3,17 +3,9 @@ use std::panic;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use bindings::Windows::Win32::Foundation::{
-    E_FAIL, HINSTANCE, HWND, LPARAM, LRESULT, PSTR, WPARAM,
-};
-use bindings::Windows::Win32::UI::Controls::{
-    TCIF_STATE, TCIF_TEXT, TCIS_HIGHLIGHTED, TCITEMA, TCM_DELETEITEM, TCM_INSERTITEMA,
-};
-use bindings::Windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExA, GetWindowLongPtrA, SendMessageA, SetWindowLongPtrA, SetWindowLongPtrW,
-    GWLP_USERDATA, GWLP_WNDPROC, HMENU, WINDOW_EX_STYLE, WM_MBUTTONDOWN, WNDPROC, WS_CHILD,
-    WS_CLIPSIBLINGS, WS_VISIBLE,
-};
+use bindings::Windows::Win32::Foundation::*;
+use bindings::Windows::Win32::UI::Controls::*;
+use bindings::Windows::Win32::UI::WindowsAndMessaging::*;
 use windows::Result;
 
 pub static mut DLL_INSTANCE: Option<HINSTANCE> = None;
