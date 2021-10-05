@@ -1,6 +1,5 @@
 use std::borrow::BorrowMut;
 use std::cell::RefCell;
-use std::ffi::CStr;
 use std::ffi::CString;
 use std::panic;
 use std::path::PathBuf;
@@ -104,16 +103,13 @@ impl TabBar {
 }
 
 impl TabBarRef {
-    pub fn add_tab(&self, title: CString, idx: usize) -> Result<()> {
+    fn add_tab(&self, title: CString, idx: usize) -> Result<()> {
         let handle = self.0.borrow().handle;
         let tab_info = TCITEMA {
-            mask: TCIF_STATE | TCIF_TEXT,
-            dwState: 0,
-            dwStateMask: TCIS_HIGHLIGHTED,
+            mask: TCIF_TEXT,
             pszText: PSTR(title.into_raw() as *mut u8),
-            cchTextMax: 0,
-            iImage: 0,
             lParam: LPARAM(0),
+            ..Default::default()
         };
         let result = unsafe {
             SendMessageA(
@@ -131,7 +127,40 @@ impl TabBarRef {
         Ok(())
     }
 
-    pub fn remove_tab(&self, idx: usize) -> Result<()> {
+    fn set_tab_title(&self, title: String, idx: usize) -> Result<()> {
+        let handle = self.0.borrow().handle;
+
+        let tab_info = TCITEMA {
+            mask: TCIF_TEXT,
+            pszText: PSTR(CString::new(title).expect("invalid title").into_raw() as *mut u8),
+            ..Default::default()
+        };
+
+        let result = unsafe {
+            SendMessageA(
+                handle,
+                TCM_INSERTITEMA,
+                WPARAM(idx),
+                LPARAM(std::ptr::addr_of!(tab_info) as isize),
+            )
+        };
+        match result.0 {
+            0 => Err(E_FAIL.into()),
+            _ => Ok(()),
+        }
+    }
+
+    fn get_tab_count(&self) -> i32 {
+        let handle = self.0.borrow().handle;
+        unsafe { SendMessageA(handle, TCM_GETITEMCOUNT, WPARAM(0), LPARAM(0)).0 }
+    }
+
+    fn get_selected_tab_index(&self) -> Option<i32> {
+        let handle = self.0.borrow().handle;
+        unsafe { Some(SendMessageA(handle, TCM_GETITEMCOUNT, WPARAM(0), LPARAM(0)).0) }
+    }
+
+    fn remove_tab(&self, idx: usize) -> Result<()> {
         let handle = self.0.borrow().handle;
         unsafe {
             match SendMessageA(handle, TCM_DELETEITEM, WPARAM(idx), LPARAM(0)) {
