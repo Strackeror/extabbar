@@ -1,4 +1,7 @@
+use std::borrow::BorrowMut;
 use std::cell::RefCell;
+use std::ffi::CStr;
+use std::ffi::CString;
 use std::panic;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -15,11 +18,14 @@ pub struct Tab {
 }
 
 #[derive(Default)]
-pub struct TabBar(pub Rc<RefCell<Obj>>);
+pub struct TabBar(Rc<TabBarRef>);
 
 #[derive(Default)]
-pub struct Obj {
-    pub handle: HWND,
+struct TabBarRef(RefCell<Obj>);
+
+#[derive(Default)]
+struct Obj {
+    handle: HWND,
 
     tabs: Vec<Tab>,
     default_window_procedure: Option<WNDPROC>,
@@ -34,26 +40,12 @@ pub extern "system" fn tab_bar_proc(
     let obj_ptr = unsafe {
         match GetWindowLongPtrA(hwnd, GWLP_USERDATA) {
             0 => panic!("Could not get user data"),
-            n => (n as *mut Obj),
+            n => (n as *mut TabBarRef),
         }
     };
 
-    log::info!("received message {:x}", message);
-    if message == WM_MBUTTONDOWN {
-        log::info!("received mouse press");
-        unsafe {
-            (*obj_ptr)
-                .add_tab("added\0".to_owned().as_mut_str(), 5)
-                .unwrap();
-        }
-    }
-
-    unsafe {
-        match (*obj_ptr).default_window_procedure {
-            None => panic!("Could not get wndproc"),
-            Some(wndproc) => wndproc(hwnd, message, wparam, lparam),
-        }
-    }
+    let obj = unsafe { (*obj_ptr).borrow_mut() };
+    obj.window_procedure(hwnd, message, wparam, lparam)
 }
 
 impl TabBar {
@@ -76,14 +68,15 @@ impl TabBar {
         };
 
         log::warn!("TabBar created {:?}", handle);
-        let ret = TabBar(Rc::new(RefCell::new(Obj {
+        let ret = TabBar(Rc::new(TabBarRef(RefCell::new(Obj {
             handle,
             ..Default::default()
-        })));
+        }))));
 
         unsafe {
-            let mut obj = (*ret.0).borrow_mut();
-            SetWindowLongPtrA(handle, GWLP_USERDATA, (*ret.0).as_ptr() as isize);
+            let mut obj = (*ret.0).0.borrow_mut();
+
+            SetWindowLongPtrA(handle, GWLP_USERDATA, Rc::as_ptr(&ret.0) as isize);
             let default_proc = SetWindowLongPtrW(
                 handle,
                 GWLP_WNDPROC,
@@ -100,22 +93,31 @@ impl TabBar {
 
         ret
     }
+
+    pub fn get_handle(&self) -> HWND {
+        return self.0 .0.borrow().handle;
+    }
+
+    pub fn add_tab(&self, title: CString, idx: usize) -> Result<()> {
+        self.0.add_tab(title, idx)
+    }
 }
 
-impl Obj {
-    pub fn add_tab(&mut self, title: &mut str, idx: usize) -> Result<()> {
+impl TabBarRef {
+    pub fn add_tab(&self, title: CString, idx: usize) -> Result<()> {
+        let handle = self.0.borrow().handle;
         let tab_info = TCITEMA {
             mask: TCIF_STATE | TCIF_TEXT,
             dwState: 0,
             dwStateMask: TCIS_HIGHLIGHTED,
-            pszText: PSTR(title.as_mut_ptr()),
+            pszText: PSTR(title.into_raw() as *mut u8),
             cchTextMax: 0,
             iImage: 0,
             lParam: LPARAM(0),
         };
         let result = unsafe {
             SendMessageA(
-                &self.handle,
+                handle,
                 TCM_INSERTITEMA,
                 WPARAM(idx),
                 LPARAM(std::ptr::addr_of!(tab_info) as isize),
@@ -129,12 +131,30 @@ impl Obj {
         Ok(())
     }
 
-    pub fn remove_tab(&mut self, idx: usize) -> Result<()> {
+    pub fn remove_tab(&self, idx: usize) -> Result<()> {
+        let handle = self.0.borrow().handle;
         unsafe {
-            match SendMessageA(&self.handle, TCM_DELETEITEM, WPARAM(idx), LPARAM(0)) {
+            match SendMessageA(handle, TCM_DELETEITEM, WPARAM(idx), LPARAM(0)) {
                 LRESULT(0) => Err(E_FAIL.into()),
                 _ => Ok(()),
             }
         }
+    }
+
+    fn window_procedure(
+        &self,
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        LRESULT(match message {
+            WM_MBUTTONDOWN => self.add_tab(CString::new("added").unwrap(), 0).is_ok() as i32,
+            WM_RBUTTONDOWN => self.remove_tab(0).is_ok() as i32,
+            _ => {
+                let proc = self.0.borrow().default_window_procedure;
+                unsafe { proc.unwrap()(hwnd, message, wparam, lparam).0 }
+            }
+        })
     }
 }

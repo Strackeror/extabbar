@@ -2,6 +2,7 @@
 
 mod tabs;
 
+use std::ffi::CString;
 use std::rc::Rc;
 
 use bindings::*;
@@ -75,11 +76,7 @@ impl DeskBand {
                 (|| -> Result<HWND> { p_unk_site.cast::<IOleWindow>()?.GetWindow() })().ok();
             if let Some(parent) = self.parent_window_handle {
                 let window = tabs::TabBar::new(parent);
-                window
-                    .0
-                    .borrow_mut()
-                    .add_tab("title\0".to_owned().as_mut_str(), 0)
-                    .unwrap();
+                window.add_tab(CString::new("init").unwrap(), 0).unwrap();
                 //window.add_tab("test2");
                 self.window = Some(window);
             }
@@ -100,7 +97,7 @@ impl DeskBand {
     pub unsafe fn GetWindow(&self) -> Result<HWND> {
         log::info!("Get window");
         match &self.window {
-            Some(window) => Ok((*window.0).borrow().handle),
+            Some(window) => Ok(window.get_handle()),
             None => Err(E_FAIL.into()),
         }
     }
