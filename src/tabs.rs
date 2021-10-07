@@ -43,22 +43,22 @@ pub extern "system" fn tab_bar_proc(
         }
     };
 
-    let obj = unsafe { (*obj_ptr).borrow_mut() };
+    let obj = unsafe { &(*obj_ptr) };
     obj.window_procedure(hwnd, message, wparam, lparam)
 }
 
 impl TabBar {
     pub fn new(parent: HWND) -> TabBar {
         let handle = unsafe {
-            CreateWindowExA(
+            CreateWindowExW(
                 WINDOW_EX_STYLE(0),
                 "SysTabControl32",
                 "",
                 WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE,
                 0,
                 0,
-                200,
-                25,
+                0,
+                0,
                 parent,
                 HMENU(0),
                 DLL_INSTANCE.unwrap(),

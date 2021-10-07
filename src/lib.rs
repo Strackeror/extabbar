@@ -2,15 +2,27 @@
 
 mod tabs;
 
-use std::ffi::CString;
+use std::ffi::{c_void, CString};
+use std::panic;
 use std::rc::Rc;
 
+use bindings::Windows::Win32::System::LibraryLoader::DisableThreadLibraryCalls;
+use bindings::Windows::Win32::System::SystemServices::IServiceProvider;
+use bindings::Windows::Win32::System::WindowsProgramming::{DWebBrowserEvents2, IWebBrowserApp};
+use bindings::Windows::Win32::UI::WindowsAndMessaging::{
+    DestroyWindow, ShowWindow, SW_HIDE, SW_SHOW,
+};
 use bindings::*;
 use windows::*;
 
 use bindings::Windows::Win32::Foundation::*;
 use bindings::Windows::Win32::Storage::StructuredStorage::IStream;
-use bindings::Windows::Win32::System::Com::IOleWindow;
+use bindings::Windows::Win32::System::Com::{
+    IConnectionPoint, IConnectionPointContainer, IOleWindow,
+};
+use bindings::Windows::Win32::System::OleAutomation::{
+    IDispatch, ITypeInfo, DISPPARAMS, EXCEPINFO, VARIANT,
+};
 use bindings::Windows::Win32::UI::Shell::*;
 
 // {9ecce421-925a-4484-b2cf-c00b182bc32a}
@@ -21,13 +33,59 @@ const EXT_TAB_GUID: Guid = Guid::from_values(
     [0xb2, 0xcf, 0xc0, 0x0b, 0x18, 0x2b, 0xc3, 0x2a],
 );
 
-#[implement(Windows::Win32::System::Com::{IPersistStream, IObjectWithSite},  Windows::Win32::UI::Shell::{IDeskBand})]
+#[implement(Windows::Win32::System::WindowsProgramming::DWebBrowserEvents2)]
+#[derive(Clone, Copy)]
+struct BrowserEventHandlerTest {}
+
+#[allow(non_snake_case)]
+impl BrowserEventHandlerTest {
+    pub unsafe fn GetTypeInfoCount(&self) -> Result<u32> {
+        Ok(0)
+    }
+
+    pub unsafe fn GetTypeInfo(&self, itinfo: u32, lcid: u32) -> Result<ITypeInfo> {
+        Err(E_NOTIMPL.into())
+    }
+
+    pub unsafe fn GetIDsOfNames(
+        &self,
+        riid: *const Guid,
+        rgsznames: *const PWSTR,
+        cnames: u32,
+        lcid: u32,
+        rgdispid: *mut i32,
+    ) -> Result<()> {
+        log::info!("rgsznames:{:?} lcid:{:?}", *rgsznames, lcid);
+        Err(DISP_E_UNKNOWNNAME.into())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn Invoke(
+        &self,
+        dispidmember: i32,
+        riid: *const Guid,
+        lcid: u32,
+        wflags: u16,
+        pdispparams: *const DISPPARAMS,
+        pvarresult: *mut VARIANT,
+        pexcepinfo: *mut EXCEPINFO,
+        puargerr: *mut u32,
+    ) -> Result<()> {
+        if dispidmember == 0xfc {
+            log::info!("Received navigate complete {:?}", pdispparams);
+        }
+        Ok(())
+    }
+}
+
+#[implement(Windows::Win32::System::Com::{IObjectWithSite},  Windows::Win32::UI::Shell::{IDeskBand})]
 #[derive(Default)]
 struct DeskBand {
     parent_window_handle: Option<HWND>,
 
     p_site: Option<Rc<IUnknown>>,
     p_input_object_site: Option<Rc<IInputObjectSite>>,
+    p_dispatch: Option<BrowserEventHandlerTest>,
 
     window: Option<tabs::TabBar>,
 }
@@ -35,6 +93,7 @@ struct DeskBand {
 #[allow(non_snake_case)]
 impl DeskBand {
     // IPersistStream
+    /*
     pub unsafe fn GetClassID(&self) -> Result<Guid> {
         Ok(EXT_TAB_GUID)
     }
@@ -54,6 +113,7 @@ impl DeskBand {
     pub unsafe fn GetSizeMax(&self) -> Result<u64> {
         Err(E_NOTIMPL.into())
     }
+    */
 
     // IObjectWithSite
     pub unsafe fn SetSite(&mut self, punksite: &Option<IUnknown>) -> Result<()> {
@@ -72,12 +132,51 @@ impl DeskBand {
                 Err(_) => None,
             };
 
+            self.p_dispatch = Some(BrowserEventHandlerTest {});
+
+            let serviceProvider = self
+                .p_input_object_site
+                .as_ref()
+                .unwrap()
+                .cast::<IServiceProvider>()
+                .unwrap();
+
+            let mut ptr: *mut c_void = std::ptr::null_mut();
+            let web_browser_app_guid = IWebBrowserApp::IID;
+
+            serviceProvider
+                .QueryService(
+                    std::ptr::addr_of!(web_browser_app_guid),
+                    std::ptr::addr_of!(web_browser_app_guid),
+                    std::ptr::addr_of_mut!(ptr),
+                )
+                .unwrap();
+
+            if ptr.is_null() {
+                panic!("null here");
+            }
+
+            let webbrowser = IWebBrowserApp::from_abi(ptr).expect("from abi failed");
+            let container = webbrowser
+                .cast::<IConnectionPointContainer>()
+                .expect("could not get container");
+
+            let iid = DWebBrowserEvents2::IID;
+
+            let point = container
+                .FindConnectionPoint(std::ptr::addr_of!(iid))
+                .expect("could not get connection point");
+
+            let punksink = *self.p_dispatch.as_ref().unwrap();
+            let punksink: IUnknown = punksink.into();
+
+            point.Advise(punksink).expect("advise failed");
+
             self.parent_window_handle =
                 (|| -> Result<HWND> { p_unk_site.cast::<IOleWindow>()?.GetWindow() })().ok();
             if let Some(parent) = self.parent_window_handle {
                 let window = tabs::TabBar::new(parent);
-                window.add_tab(CString::new("init").unwrap(), 0).unwrap();
-                //window.add_tab("test2");
+                window.add_tab(CString::new("init").unwrap(), 1).unwrap();
                 self.window = Some(window);
             }
         }
@@ -87,7 +186,9 @@ impl DeskBand {
     }
 
     pub unsafe fn GetSite(&self, iid: *const Guid, out: *mut RawPtr) -> HRESULT {
+        log::info!("Get site");
         if let Some(site) = &self.p_input_object_site {
+            log::info!("Site exists");
             return IUnknown::from(Rc::as_ref(site)).query(iid, out);
         }
         E_FAIL
@@ -107,19 +208,38 @@ impl DeskBand {
     }
 
     pub unsafe fn ShowDW(&self, _show: BOOL) -> Result<()> {
+        log::info!("ShowDW {:?}", _show);
+        if let Some(window) = &self.window {
+            ShowWindow(
+                window.get_handle(),
+                match _show.0 {
+                    0 => SW_HIDE,
+                    _ => SW_SHOW,
+                },
+            );
+        }
         Ok(())
     }
 
     pub unsafe fn CloseDW(&mut self, _reserved: u32) -> Result<()> {
+        log::info!("CloseDW");
         self.p_input_object_site = None;
+        if let Some(window) = &self.window {
+            let handle = window.get_handle();
+            ShowWindow(handle, SW_HIDE);
+            DestroyWindow(handle);
+        }
+        self.window = None;
         Ok(())
     }
+
     pub unsafe fn ResizeBorderDW(
         &self,
         _prc_border: *const RECT,
         _unknown_toolbar_site: &Option<IUnknown>,
         _reserved: BOOL,
     ) -> Result<()> {
+        log::info!("ResizeBorderDW");
         Err(E_NOTIMPL.into())
     }
 
@@ -129,6 +249,7 @@ impl DeskBand {
         _view_mode: u32,
         desk_band_info_ptr: *mut DESKBANDINFO,
     ) -> Result<()> {
+        log::info!("GetBandInfo");
         if desk_band_info_ptr.is_null() {
             return Err(E_INVALIDARG.into());
         }
@@ -201,11 +322,7 @@ impl ClassFactory {
 // Dll stuff
 #[no_mangle]
 #[allow(non_snake_case)]
-pub extern "system" fn DllMain(
-    _instance: HINSTANCE,
-    dw_reason: u32,
-    _lpv_reserved: RawPtr,
-) -> BOOL {
+pub extern "system" fn DllMain(instance: HINSTANCE, dw_reason: u32, _lpv_reserved: RawPtr) -> BOOL {
     if dw_reason == 1 {
         //DLL_PROCESS_ATTACH
         fern::Dispatch::new()
@@ -224,10 +341,11 @@ pub extern "system" fn DllMain(
             .unwrap();
         log::info!("Attached");
         std::panic::set_hook(Box::new(|info| log::error!("PANIC ! {:?}", info)));
+        unsafe { DisableThreadLibraryCalls(instance) };
 
         // Make this safe at some point
         unsafe {
-            tabs::DLL_INSTANCE = Some(_instance);
+            tabs::DLL_INSTANCE = Some(instance);
         }
     }
     true.into()
@@ -252,6 +370,7 @@ pub unsafe extern "stdcall" fn DllGetClassObject(
 #[no_mangle]
 #[allow(non_snake_case)]
 pub extern "stdcall" fn DllCanUnloadNow() -> HRESULT {
+    log::info!("Check Can Unload");
     S_OK
 }
 
