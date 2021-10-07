@@ -16,13 +16,8 @@ use bindings::*;
 use windows::*;
 
 use bindings::Windows::Win32::Foundation::*;
-use bindings::Windows::Win32::Storage::StructuredStorage::IStream;
-use bindings::Windows::Win32::System::Com::{
-    IConnectionPoint, IConnectionPointContainer, IOleWindow,
-};
-use bindings::Windows::Win32::System::OleAutomation::{
-    IDispatch, ITypeInfo, DISPPARAMS, EXCEPINFO, VARIANT,
-};
+use bindings::Windows::Win32::System::Com::{IConnectionPointContainer, IOleWindow};
+use bindings::Windows::Win32::System::OleAutomation::*;
 use bindings::Windows::Win32::UI::Shell::*;
 
 // {9ecce421-925a-4484-b2cf-c00b182bc32a}
@@ -71,8 +66,18 @@ impl BrowserEventHandlerTest {
         pexcepinfo: *mut EXCEPINFO,
         puargerr: *mut u32,
     ) -> Result<()> {
-        if dispidmember == 0xfc {
-            log::info!("Received navigate complete {:?}", pdispparams);
+        if dispidmember == 0xfc && !pdispparams.is_null() {
+            let args =
+                std::slice::from_raw_parts((*pdispparams).rgvarg, (*pdispparams).cArgs as usize);
+            let invariant = args[0].Anonymous.Anonymous.Anonymous.pvarVal;
+            let url = &(*invariant).Anonymous.Anonymous.Anonymous.bstrVal;
+            let url = (*url).to_string();
+            log::info!(
+                "Received navigate complete url:{:?} {:#x?} {:#x?}",
+                url,
+                args[0].Anonymous.Anonymous.vt,
+                VT_BSTR
+            );
         }
         Ok(())
     }
