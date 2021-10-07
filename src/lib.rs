@@ -92,29 +92,6 @@ struct DeskBand {
 
 #[allow(non_snake_case)]
 impl DeskBand {
-    // IPersistStream
-    /*
-    pub unsafe fn GetClassID(&self) -> Result<Guid> {
-        Ok(EXT_TAB_GUID)
-    }
-
-    pub unsafe fn IsDirty(&self) -> Result<()> {
-        Err(S_FALSE.into())
-    }
-
-    pub unsafe fn Load(&self, _pstm: &Option<IStream>) -> Result<()> {
-        Ok(())
-    }
-
-    pub unsafe fn Save(&self, _pstm: &Option<IStream>, _fcleardirty: BOOL) -> Result<()> {
-        Ok(())
-    }
-
-    pub unsafe fn GetSizeMax(&self) -> Result<u64> {
-        Err(E_NOTIMPL.into())
-    }
-    */
-
     // IObjectWithSite
     pub unsafe fn SetSite(&mut self, punksite: &Option<IUnknown>) -> Result<()> {
         log::info!("Set Site");
@@ -171,7 +148,7 @@ impl DeskBand {
             let punksink: IUnknown = punksink.into();
 
             point.Advise(punksink).expect("advise failed");
-
+            //*/
             self.parent_window_handle =
                 (|| -> Result<HWND> { p_unk_site.cast::<IOleWindow>()?.GetWindow() })().ok();
             if let Some(parent) = self.parent_window_handle {
@@ -371,7 +348,7 @@ pub unsafe extern "stdcall" fn DllGetClassObject(
 #[allow(non_snake_case)]
 pub extern "stdcall" fn DllCanUnloadNow() -> HRESULT {
     log::info!("Check Can Unload");
-    S_OK
+    S_FALSE
 }
 
 #[no_mangle]

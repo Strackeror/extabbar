@@ -75,7 +75,7 @@ impl TabBar {
         unsafe {
             let mut obj = (*ret.0).0.borrow_mut();
 
-            SetWindowLongPtrA(handle, GWLP_USERDATA, Rc::as_ptr(&ret.0) as isize);
+            SetWindowLongPtrW(handle, GWLP_USERDATA, Rc::as_ptr(&ret.0) as isize);
             let default_proc = SetWindowLongPtrW(
                 handle,
                 GWLP_WNDPROC,
