@@ -1,6 +1,4 @@
-use std::borrow::BorrowMut;
 use std::cell::RefCell;
-use std::ffi::CString;
 use std::panic;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -16,7 +14,7 @@ pub struct Tab {
     path: Option<PathBuf>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct TabBar(Rc<TabBarRef>);
 
 #[derive(Default)]
@@ -37,7 +35,7 @@ pub extern "system" fn tab_bar_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     let obj_ptr = unsafe {
-        match GetWindowLongPtrA(hwnd, GWLP_USERDATA) {
+        match GetWindowLongPtrW(hwnd, GWLP_USERDATA) {
             0 => panic!("Could not get user data"),
             n => (n as *mut TabBarRef),
         }
@@ -97,24 +95,37 @@ impl TabBar {
         return self.0 .0.borrow().handle;
     }
 
-    pub fn add_tab(&self, title: CString, idx: usize) -> Result<()> {
+    pub fn add_tab(&self, title: String, idx: usize) -> Result<()> {
         self.0.add_tab(title, idx)
+    }
+
+    pub fn navigated(&self, title: String) -> Result<()> {
+        if let Some(index) = self.0.get_selected_tab_index() {
+            self.0.set_tab_title(title, index as usize)?;
+        }
+
+        Ok(())
     }
 }
 
 impl TabBarRef {
-    fn add_tab(&self, title: CString, idx: usize) -> Result<()> {
+    fn add_tab(&self, title: String, idx: usize) -> Result<()> {
         let handle = self.0.borrow().handle;
-        let tab_info = TCITEMA {
+
+        let mut text: Vec<_> = title.encode_utf16().collect();
+        text.push(0);
+        let text = PWSTR(Box::<[_]>::into_raw(text.into_boxed_slice()) as _);
+
+        let tab_info = TCITEMW {
             mask: TCIF_TEXT,
-            pszText: PSTR(title.into_raw() as *mut u8),
+            pszText: text,
             lParam: LPARAM(0),
             ..Default::default()
         };
         let result = unsafe {
-            SendMessageA(
+            SendMessageW(
                 handle,
-                TCM_INSERTITEMA,
+                TCM_INSERTITEMW,
                 WPARAM(idx),
                 LPARAM(std::ptr::addr_of!(tab_info) as isize),
             )
@@ -130,40 +141,47 @@ impl TabBarRef {
     fn set_tab_title(&self, title: String, idx: usize) -> Result<()> {
         let handle = self.0.borrow().handle;
 
-        let tab_info = TCITEMA {
+        let mut text: Vec<_> = title.encode_utf16().collect();
+        text.push(0);
+        log::info!("Setting tab no {} to {:?}", idx, text);
+        let text = PWSTR(Box::<[_]>::into_raw(text.into_boxed_slice()) as _);
+        let tab_info = TCITEMW {
             mask: TCIF_TEXT,
-            pszText: PSTR(CString::new(title).expect("invalid title").into_raw() as *mut u8),
+            pszText: text,
+            lParam: LPARAM(0),
             ..Default::default()
         };
 
         let result = unsafe {
-            SendMessageA(
+            SendMessageW(
                 handle,
-                TCM_INSERTITEMA,
+                TCM_SETITEMW,
                 WPARAM(idx),
                 LPARAM(std::ptr::addr_of!(tab_info) as isize),
             )
         };
-        match result.0 {
+        let res = match result.0 {
             0 => Err(E_FAIL.into()),
             _ => Ok(()),
-        }
+        };
+        log::info!("result {:?}", res);
+        res
     }
 
     fn get_tab_count(&self) -> i32 {
         let handle = self.0.borrow().handle;
-        unsafe { SendMessageA(handle, TCM_GETITEMCOUNT, WPARAM(0), LPARAM(0)).0 }
+        unsafe { SendMessageW(handle, TCM_GETITEMCOUNT, WPARAM(0), LPARAM(0)).0 }
     }
 
     fn get_selected_tab_index(&self) -> Option<i32> {
         let handle = self.0.borrow().handle;
-        unsafe { Some(SendMessageA(handle, TCM_GETITEMCOUNT, WPARAM(0), LPARAM(0)).0) }
+        unsafe { Some(SendMessageW(handle, TCM_GETCURSEL, WPARAM(0), LPARAM(0)).0) }
     }
 
     fn remove_tab(&self, idx: usize) -> Result<()> {
         let handle = self.0.borrow().handle;
         unsafe {
-            match SendMessageA(handle, TCM_DELETEITEM, WPARAM(idx), LPARAM(0)) {
+            match SendMessageW(handle, TCM_DELETEITEM, WPARAM(idx), LPARAM(0)) {
                 LRESULT(0) => Err(E_FAIL.into()),
                 _ => Ok(()),
             }
@@ -178,7 +196,7 @@ impl TabBarRef {
         lparam: LPARAM,
     ) -> LRESULT {
         LRESULT(match message {
-            WM_MBUTTONDOWN => self.add_tab(CString::new("added").unwrap(), 0).is_ok() as i32,
+            WM_MBUTTONDOWN => self.add_tab("added".to_owned(), 0).is_ok() as i32,
             WM_RBUTTONDOWN => self.remove_tab(0).is_ok() as i32,
             _ => {
                 let proc = self.0.borrow().default_window_procedure;
