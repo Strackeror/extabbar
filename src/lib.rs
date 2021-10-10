@@ -3,7 +3,6 @@
 mod tabs;
 
 use std::ffi::c_void;
-use std::path::Path;
 use std::rc::Rc;
 
 use bindings::Windows::Win32::System::LibraryLoader::DisableThreadLibraryCalls;
@@ -85,17 +84,15 @@ impl BrowserEventHandler {
     }
 
     unsafe fn NewWindow(&mut self, params: &[VARIANT]) -> Result<VARIANT> {
-        unsafe {
-            log::info!("New window detected!");
-            if params[0].Anonymous.Anonymous.vt != VT_BSTR.0 as u16 {
-                return Err(E_FAIL.into());
-            }
-
-            let url = params[0].Anonymous.Anonymous.Anonymous.bstrVal.to_string();
-            log::info!("New window url: {:?}", url);
-            self.tab_bar.new_window(url)?;
-            Ok(Default::default())
+        log::info!("New window detected!");
+        if params[0].Anonymous.Anonymous.vt != VT_BSTR.0 as u16 {
+            return Err(E_FAIL.into());
         }
+
+        let url = params[0].Anonymous.Anonymous.Anonymous.bstrVal.to_string();
+        log::info!("New window url: {:?}", url);
+        self.tab_bar.new_window(url)?;
+        Ok(Default::default())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -167,7 +164,7 @@ impl DeskBand {
             .cast::<IOleWindow>()?
             .GetWindow()?;
 
-        let mut tab_bar = tabs::TabBar::new(parent_window_handle);
+        let tab_bar = tabs::TabBar::new(parent_window_handle);
         tab_bar.add_tab("init".to_owned(), 0)?;
 
         let browser_event_handler = BrowserEventHandler {

@@ -1,5 +1,3 @@
-use std::borrow::Borrow;
-use std::cell::Ref;
 use std::cell::RefCell;
 use std::cell::RefMut;
 use std::collections::HashMap;
@@ -54,7 +52,7 @@ pub extern "system" fn tab_bar_proc(
     obj.window_procedure(hwnd, message, wparam, lparam)
 }
 
-fn get_tab_name(path: &String) -> Result<String> {
+fn get_tab_name(path: &str) -> Result<String> {
     let path = Path::new(&path);
     let file_name = path.file_name().ok_or(E_FAIL)?;
     let file_name = file_name.to_owned().into_string();
