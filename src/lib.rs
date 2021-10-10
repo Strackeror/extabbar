@@ -78,18 +78,29 @@ impl BrowserEventHandler {
         }
 
         let path = unsafe { in_variant.Anonymous.Anonymous.Anonymous.bstrVal.to_string() };
-        let path = Path::new(&path);
-        let file_name = path.file_name().ok_or(E_FAIL)?;
-        let file_name = file_name.to_owned().into_string();
-        let file_name = file_name.map_err(|_| Error::from(E_FAIL))?;
-        self.tab_bar.navigated(file_name)?;
+        log::debug!("Navigated to {:?}", path);
+        self.tab_bar.navigated(path)?;
 
         Ok(Default::default())
     }
 
+    unsafe fn NewWindow(&mut self, params: &[VARIANT]) -> Result<VARIANT> {
+        unsafe {
+            log::info!("New window detected!");
+            if params[0].Anonymous.Anonymous.vt != VT_BSTR.0 as u16 {
+                return Err(E_FAIL.into());
+            }
+
+            let url = params[0].Anonymous.Anonymous.Anonymous.bstrVal.to_string();
+            log::info!("New window url: {:?}", url);
+            self.tab_bar.new_window(url)?;
+            Ok(Default::default())
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub unsafe fn Invoke(
-        &self,
+        &mut self,
         dispidmember: i32,
         riid: *const Guid,
         lcid: u32,
@@ -111,6 +122,7 @@ impl BrowserEventHandler {
 
         let result = match dispidmember {
             0xfc => self.NavigateComplete(params),
+            0xfb => self.NewWindow(params),
             _ => Ok(Default::default()),
         };
 
@@ -155,7 +167,7 @@ impl DeskBand {
             .cast::<IOleWindow>()?
             .GetWindow()?;
 
-        let tab_bar = tabs::TabBar::new(parent_window_handle);
+        let mut tab_bar = tabs::TabBar::new(parent_window_handle);
         tab_bar.add_tab("init".to_owned(), 0)?;
 
         let browser_event_handler = BrowserEventHandler {

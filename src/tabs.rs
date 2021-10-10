@@ -1,15 +1,22 @@
+use std::borrow::Borrow;
+use std::cell::Ref;
 use std::cell::RefCell;
+use std::cell::RefMut;
+use std::collections::HashMap;
 use std::panic;
+use std::path::Path;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use bindings::Windows::Win32::Foundation::*;
 use bindings::Windows::Win32::UI::Controls::*;
 use bindings::Windows::Win32::UI::WindowsAndMessaging::*;
+use windows::Error;
 use windows::Result;
 
 pub static mut DLL_INSTANCE: Option<HINSTANCE> = None;
 
+#[derive(Clone, Default, Debug)]
 pub struct Tab {
     path: Option<PathBuf>,
 }
@@ -24,7 +31,9 @@ struct TabBarRef(RefCell<Obj>);
 struct Obj {
     handle: HWND,
 
-    tabs: Vec<Tab>,
+    tabs: HashMap<i32, Tab>,
+    tab_key_counter: i32,
+
     default_window_procedure: Option<WNDPROC>,
 }
 
@@ -43,6 +52,14 @@ pub extern "system" fn tab_bar_proc(
 
     let obj = unsafe { &(*obj_ptr) };
     obj.window_procedure(hwnd, message, wparam, lparam)
+}
+
+fn get_tab_name(path: &String) -> Result<String> {
+    let path = Path::new(&path);
+    let file_name = path.file_name().ok_or(E_FAIL)?;
+    let file_name = file_name.to_owned().into_string();
+    let file_name = file_name.map_err(|_| Error::from(E_FAIL))?;
+    Ok(file_name)
 }
 
 impl TabBar {
@@ -95,21 +112,40 @@ impl TabBar {
         return self.0 .0.borrow().handle;
     }
 
-    pub fn add_tab(&self, title: String, idx: usize) -> Result<()> {
-        self.0.add_tab(title, idx)
+    pub fn add_tab(&self, path: String, idx: usize) -> Result<()> {
+        let key: i32;
+        {
+            let obj = &mut *self.0 .0.borrow_mut();
+            let tabs = &mut obj.tabs;
+            let key_counter = &mut obj.tab_key_counter;
+
+            key = *key_counter;
+            *key_counter += 1;
+            tabs.insert(
+                key,
+                Tab {
+                    path: Some(Path::new(&path).to_owned()),
+                },
+            );
+        }
+        self.0.add_tab(path, idx, key)
     }
 
-    pub fn navigated(&self, title: String) -> Result<()> {
+    pub fn navigated(&self, path: String) -> Result<()> {
         if let Some(index) = self.0.get_selected_tab_index() {
-            self.0.set_tab_title(title, index as usize)?;
+            self.0.get_tab(index)?.path = Some(Path::new(&path).to_owned());
+            self.0.set_tab_title(get_tab_name(&path)?, index as usize)?;
         }
-
         Ok(())
+    }
+
+    pub fn new_window(&self, path: String) -> Result<()> {
+        self.add_tab(path, self.0.get_tab_count() as usize)
     }
 }
 
 impl TabBarRef {
-    fn add_tab(&self, title: String, idx: usize) -> Result<()> {
+    fn add_tab(&self, title: String, idx: usize, key: i32) -> Result<()> {
         let handle = self.0.borrow().handle;
 
         let mut text: Vec<_> = title.encode_utf16().collect();
@@ -117,9 +153,9 @@ impl TabBarRef {
         let text = PWSTR(Box::<[_]>::into_raw(text.into_boxed_slice()) as _);
 
         let tab_info = TCITEMW {
-            mask: TCIF_TEXT,
+            mask: TCIF_TEXT | TCIF_PARAM,
             pszText: text,
-            lParam: LPARAM(0),
+            lParam: LPARAM(key as isize),
             ..Default::default()
         };
         let result = unsafe {
@@ -148,7 +184,6 @@ impl TabBarRef {
         let tab_info = TCITEMW {
             mask: TCIF_TEXT,
             pszText: text,
-            lParam: LPARAM(0),
             ..Default::default()
         };
 
@@ -173,9 +208,33 @@ impl TabBarRef {
         unsafe { SendMessageW(handle, TCM_GETITEMCOUNT, WPARAM(0), LPARAM(0)).0 }
     }
 
-    fn get_selected_tab_index(&self) -> Option<i32> {
+    fn get_selected_tab_index(&self) -> Option<usize> {
         let handle = self.0.borrow().handle;
-        unsafe { Some(SendMessageW(handle, TCM_GETCURSEL, WPARAM(0), LPARAM(0)).0) }
+        unsafe { Some(SendMessageW(handle, TCM_GETCURSEL, WPARAM(0), LPARAM(0)).0 as usize) }
+    }
+
+    fn get_tab(&self, index: usize) -> Result<RefMut<Tab>> {
+        let mut tab_info: TCITEMW = Default::default();
+        let handle = self.0.borrow().handle;
+        let key = unsafe {
+            match SendMessageW(
+                handle,
+                TCM_GETITEMW,
+                WPARAM(index),
+                LPARAM(std::ptr::addr_of_mut!(tab_info) as isize),
+            ) {
+                LRESULT(0) => return Err(E_FAIL.into()),
+                _ => tab_info.lParam.0,
+            }
+        };
+
+        let key = key as i32;
+
+        if !self.0.borrow().tabs.contains_key(&key) {
+            return Err(E_FAIL.into());
+        }
+        let tab_ref = RefMut::map(self.0.borrow_mut(), |obj| obj.tabs.get_mut(&key).unwrap());
+        Ok(tab_ref)
     }
 
     fn remove_tab(&self, idx: usize) -> Result<()> {
@@ -196,7 +255,6 @@ impl TabBarRef {
         lparam: LPARAM,
     ) -> LRESULT {
         LRESULT(match message {
-            WM_MBUTTONDOWN => self.add_tab("added".to_owned(), 0).is_ok() as i32,
             WM_RBUTTONDOWN => self.remove_tab(0).is_ok() as i32,
             _ => {
                 let proc = self.0.borrow().default_window_procedure;
