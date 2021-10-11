@@ -134,11 +134,8 @@ impl BrowserEventHandler {
 }
 
 struct DeskBandData {
-    parent_window_handle: HWND,
-
     //p_site: Rc<IUnknown>,
     p_input_object_site: Rc<IInputObjectSite>,
-    browser_event_handler: BrowserEventHandler,
 
     tab_bar: tabs::TabBar,
 }
@@ -156,20 +153,8 @@ impl DeskBand {
         log::info!("Set Site");
         self.data = None;
 
+        log::info!("Getting object site");
         let input_object_site: IInputObjectSite = unknown_site.as_ref().ok_or(E_FAIL)?.cast()?;
-
-        let parent_window_handle = unknown_site
-            .as_ref()
-            .ok_or(E_FAIL)?
-            .cast::<IOleWindow>()?
-            .GetWindow()?;
-
-        let tab_bar = tabs::TabBar::new(parent_window_handle);
-        tab_bar.add_tab("init".to_owned(), 0)?;
-
-        let browser_event_handler = BrowserEventHandler {
-            tab_bar: tab_bar.clone(),
-        };
 
         log::info!("Acquiring webbrowser");
         let service_provider: IServiceProvider = input_object_site.cast()?;
@@ -185,19 +170,31 @@ impl DeskBand {
         }
         let webbrowser = IWebBrowserApp::from_abi(ptr).expect("from abi failed");
 
+        log::info!("Creating tab bar");
+        let parent_window_handle = unknown_site
+            .as_ref()
+            .ok_or(E_FAIL)?
+            .cast::<IOleWindow>()?
+            .GetWindow()?;
+
+        let tab_bar = tabs::TabBar::new(parent_window_handle, webbrowser.clone());
+        tab_bar.add_tab("init".to_owned(), 0)?;
+
         log::info!("Connecting to event handler");
+
+        let browser_event_handler = BrowserEventHandler {
+            tab_bar: tab_bar.clone(),
+        };
         let container = webbrowser.cast::<IConnectionPointContainer>()?;
 
         let iid = DWebBrowserEvents2::IID;
         let point = container.FindConnectionPoint(std::ptr::addr_of!(iid))?;
 
         point
-            .Advise(IUnknown::from(browser_event_handler.clone()))
+            .Advise(IUnknown::from(browser_event_handler))
             .expect("advise failed");
 
         self.data = Some(DeskBandData {
-            parent_window_handle,
-            browser_event_handler,
             tab_bar,
             p_input_object_site: Rc::new(input_object_site),
         });
