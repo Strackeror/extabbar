@@ -7,7 +7,9 @@ use std::rc::Rc;
 
 use bindings::Windows::Win32::System::LibraryLoader::DisableThreadLibraryCalls;
 use bindings::Windows::Win32::System::SystemServices::IServiceProvider;
-use bindings::Windows::Win32::System::WindowsProgramming::{DWebBrowserEvents2, IWebBrowserApp};
+use bindings::Windows::Win32::System::WindowsProgramming::{
+    DWebBrowserEvents2, IWebBrowser2, IWebBrowserApp,
+};
 use bindings::Windows::Win32::UI::WindowsAndMessaging::{
     DestroyWindow, ShowWindow, SW_HIDE, SW_SHOW,
 };
@@ -31,6 +33,36 @@ const EXT_TAB_GUID: Guid = Guid::from_values(
 #[derive(Clone)]
 struct BrowserEventHandler {
     tab_bar: tabs::TabBar,
+    browser: IShellBrowser,
+}
+
+fn get_current_folder_pidl(browser: &IShellBrowser) -> Result<*mut ITEMIDLIST> {
+    unsafe {
+        let folder_view: IFolderView = browser.QueryActiveShellView()?.cast()?;
+        let folder = folder_view.GetFolder::<IPersistFolder2>()?;
+        let folder_pidl = folder.GetCurFolder();
+        if folder_pidl.is_err() {
+            log::error!("Could not get pidl for current path");
+        }
+        folder_pidl
+    }
+}
+
+fn query_service_provider<T>(service_provider: &IServiceProvider) -> Result<T>
+where
+    T: Interface,
+    T: Abi<Abi = *mut std::ffi::c_void>,
+{
+    let guid = T::IID;
+    let mut ptr: *mut c_void = std::ptr::null_mut();
+    unsafe {
+        service_provider.QueryService(
+            std::ptr::addr_of!(guid),
+            std::ptr::addr_of!(guid),
+            std::ptr::addr_of_mut!(ptr),
+        )?;
+        T::from_abi(ptr)
+    }
 }
 
 #[allow(non_snake_case, unused_variables)]
@@ -56,28 +88,14 @@ impl BrowserEventHandler {
     }
 
     fn NavigateComplete(&self, params: &[VARIANT]) -> Result<VARIANT> {
-        if unsafe { params[0].Anonymous.Anonymous.vt }
-            != VARENUM(VT_BYREF.0 | VT_VARIANT.0).0 as u16
-        {
-            return Err(DISP_E_TYPEMISMATCH.into());
-        }
-
-        let in_variant = unsafe {
-            params[0]
-                .Anonymous
-                .Anonymous
-                .Anonymous
-                .pvarVal
-                .as_ref()
-                .ok_or(DISP_E_TYPEMISMATCH)
-        }?;
-
-        if unsafe { in_variant.Anonymous.Anonymous.vt } != VT_BSTR.0 as u16 {
-            return Err(DISP_E_TYPEMISMATCH.into());
-        }
-
-        let path = unsafe { in_variant.Anonymous.Anonymous.Anonymous.bstrVal.to_string() };
-        log::debug!("Navigated to {:?}", path);
+        let path = get_current_folder_pidl(&self.browser);
+        let path = match path {
+            Ok(p) => p,
+            Err(e) => {
+                log::error!("Could not get folder idl err:{:?}", e);
+                return Err(e);
+            }
+        };
         self.tab_bar.navigated(path)?;
 
         Ok(Default::default())
@@ -91,7 +109,7 @@ impl BrowserEventHandler {
 
         let url = params[0].Anonymous.Anonymous.Anonymous.bstrVal.to_string();
         log::info!("New window url: {:?}", url);
-        self.tab_bar.new_window(url)?;
+        //self.tab_bar.new_window(url)?;
         Ok(Default::default())
     }
 
@@ -156,19 +174,11 @@ impl DeskBand {
         log::info!("Getting object site");
         let input_object_site: IInputObjectSite = unknown_site.as_ref().ok_or(E_FAIL)?.cast()?;
 
-        log::info!("Acquiring webbrowser");
+        log::info!("Acquiring services");
         let service_provider: IServiceProvider = input_object_site.cast()?;
-        let mut ptr: *mut c_void = std::ptr::null_mut();
-        let web_browser_app_guid = IWebBrowserApp::IID;
-        service_provider.QueryService(
-            std::ptr::addr_of!(web_browser_app_guid),
-            std::ptr::addr_of!(web_browser_app_guid),
-            std::ptr::addr_of_mut!(ptr),
-        )?;
-        if ptr.is_null() {
-            return Err(E_FAIL.into());
-        }
-        let webbrowser = IWebBrowserApp::from_abi(ptr).expect("from abi failed");
+        let web_browser =
+            query_service_provider::<IWebBrowserApp>(&service_provider)?.cast::<IWebBrowser2>()?;
+        let shell_browser = query_service_provider::<IShellBrowser>(&service_provider)?;
 
         log::info!("Creating tab bar");
         let parent_window_handle = unknown_site
@@ -177,15 +187,16 @@ impl DeskBand {
             .cast::<IOleWindow>()?
             .GetWindow()?;
 
-        let tab_bar = tabs::TabBar::new(parent_window_handle, webbrowser.clone());
-        tab_bar.add_tab("init".to_owned(), 0)?;
+        let tab_bar = tabs::TabBar::new(parent_window_handle, shell_browser.clone());
+        tab_bar.add_tab(get_current_folder_pidl(&shell_browser)?, 0)?;
 
         log::info!("Connecting to event handler");
 
         let browser_event_handler = BrowserEventHandler {
             tab_bar: tab_bar.clone(),
+            browser: shell_browser,
         };
-        let container = webbrowser.cast::<IConnectionPointContainer>()?;
+        let container = web_browser.cast::<IConnectionPointContainer>()?;
 
         let iid = DWebBrowserEvents2::IID;
         let point = container.FindConnectionPoint(std::ptr::addr_of!(iid))?;
