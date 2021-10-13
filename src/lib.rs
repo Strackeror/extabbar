@@ -29,6 +29,8 @@ const EXT_TAB_GUID: Guid = Guid::from_values(
     [0xb2, 0xcf, 0xc0, 0x0b, 0x18, 0x2b, 0xc3, 0x2a],
 );
 
+static mut DLL_LOCK: i32 = 0;
+
 #[implement(Windows::Win32::System::WindowsProgramming::DWebBrowserEvents2)]
 #[derive(Clone)]
 struct BrowserEventHandler {
@@ -89,14 +91,7 @@ impl BrowserEventHandler {
 
     fn NavigateComplete(&self, params: &[VARIANT]) -> Result<VARIANT> {
         let path = get_current_folder_pidl(&self.browser);
-        let path = match path {
-            Ok(p) => p,
-            Err(e) => {
-                log::error!("Could not get folder idl err:{:?}", e);
-                return Err(e);
-            }
-        };
-        self.tab_bar.navigated(path)?;
+        self.tab_bar.navigated(path.ok())?;
 
         Ok(Default::default())
     }
@@ -188,7 +183,7 @@ impl DeskBand {
             .GetWindow()?;
 
         let tab_bar = tabs::TabBar::new(parent_window_handle, shell_browser.clone());
-        tab_bar.add_tab(get_current_folder_pidl(&shell_browser)?, 0)?;
+        tab_bar.add_tab(get_current_folder_pidl(&shell_browser).ok(), 0)?;
 
         log::info!("Connecting to event handler");
 
@@ -342,6 +337,11 @@ impl ClassFactory {
     }
 
     pub unsafe fn LockServer(&self, _flock: BOOL) -> Result<()> {
+        if _flock.as_bool() {
+            DLL_LOCK += 1;
+        } else {
+            DLL_LOCK -= 1;
+        }
         Ok(())
     }
 }
@@ -398,7 +398,10 @@ pub unsafe extern "stdcall" fn DllGetClassObject(
 #[allow(non_snake_case)]
 pub extern "stdcall" fn DllCanUnloadNow() -> HRESULT {
     log::info!("Check Can Unload");
-    S_FALSE
+    match unsafe { DLL_LOCK } > 0 {
+        true => S_FALSE,
+        false => S_OK,
+    }
 }
 
 #[no_mangle]

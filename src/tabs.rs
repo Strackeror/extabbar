@@ -14,7 +14,7 @@ use windows::Result;
 
 pub static mut DLL_INSTANCE: Option<HINSTANCE> = None;
 
-pub type TabPath = *mut ITEMIDLIST;
+pub type TabPath = Option<*mut ITEMIDLIST>;
 
 #[derive(Clone)]
 pub struct Tab {
@@ -72,6 +72,11 @@ unsafe fn pwstr_to_string(pwstr: PWSTR) -> Result<String> {
 }
 
 fn get_tab_name(pidl: &TabPath) -> String {
+    let pidl = match pidl {
+        None => return "???".to_owned(),
+        Some(pidl) => pidl,
+    };
+
     unsafe {
         let name = SHGetNameFromIDList(*pidl, SIGDN_NORMALDISPLAY);
         let name = match name {
@@ -315,19 +320,7 @@ impl TabBarRef {
         log::info!("trying to switch to tab {:?}", index);
         let browser = self.0.borrow().explorer.clone();
         let tab = self.get_tab(index)?.clone();
-        unsafe { browser.BrowseObject(tab.path, 0) }
-
-        /*
-        let url_bstr = unsafe { SysAllocString(tab.path.clone()) };
-        let variant: VARIANT = Default::default();
-        let variant_ptr = std::ptr::addr_of!(variant);
-
-        let ret = unsafe {
-            browser.Navigate(url_bstr, variant_ptr, variant_ptr, variant_ptr, variant_ptr)
-        };
-        log::info!("navigate to {:?} result {:?}", &tab.path, ret);
-        ret
-        */
+        unsafe { browser.BrowseObject(tab.path.ok_or(E_FAIL)?, 0) }
     }
 
     fn window_procedure(
