@@ -1,6 +1,7 @@
 fn main() {
     windows::build! {
       Windows::Win32::Foundation::*,
+      Windows::Win32::Graphics::Gdi::*,
       Windows::Win32::System::Com::{IClassFactory, IPersistStream, IObjectWithSite, IConnectionPoint, IConnectionPointContainer},
       Windows::Win32::System::LibraryLoader::DisableThreadLibraryCalls,
       Windows::Win32::System::OleAutomation::*,

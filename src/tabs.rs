@@ -1,15 +1,12 @@
-use std::cell::RefCell;
-use std::cell::RefMut;
+use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
+use std::ptr::{addr_of, addr_of_mut};
 use std::rc::Rc;
 
 use bindings::Windows::Win32::Foundation::*;
+use bindings::Windows::Win32::Graphics::Gdi::*;
 use bindings::Windows::Win32::UI::Controls::*;
-use bindings::Windows::Win32::UI::Shell::DefSubclassProc;
-use bindings::Windows::Win32::UI::Shell::SetWindowSubclass;
-use bindings::Windows::Win32::UI::Shell::{
-    IShellBrowser, SHGetNameFromIDList, ITEMIDLIST, SIGDN_NORMALDISPLAY,
-};
+use bindings::Windows::Win32::UI::Shell::*;
 use bindings::Windows::Win32::UI::WindowsAndMessaging::*;
 use windows::Result;
 
@@ -186,7 +183,7 @@ impl TabBarRef {
                 handle,
                 TCM_INSERTITEMW,
                 WPARAM(idx),
-                LPARAM(std::ptr::addr_of!(tab_info) as isize),
+                LPARAM(addr_of!(tab_info) as isize),
             )
         };
 
@@ -214,7 +211,7 @@ impl TabBarRef {
                 handle,
                 TCM_SETITEMW,
                 WPARAM(idx),
-                LPARAM(std::ptr::addr_of!(tab_info) as isize),
+                LPARAM(addr_of!(tab_info) as isize),
             )
         };
         match result.0 {
@@ -223,9 +220,9 @@ impl TabBarRef {
         }
     }
 
-    fn get_tab_count(&self) -> i32 {
+    fn get_tab_count(&self) -> usize {
         let handle = self.0.borrow().handle;
-        unsafe { SendMessageW(handle, TCM_GETITEMCOUNT, WPARAM(0), LPARAM(0)).0 }
+        unsafe { SendMessageW(handle, TCM_GETITEMCOUNT, WPARAM(0), LPARAM(0)).0 as usize }
     }
 
     fn get_selected_tab_index(&self) -> Option<usize> {
@@ -244,10 +241,32 @@ impl TabBarRef {
                 handle,
                 TCM_GETITEMW,
                 WPARAM(index),
-                LPARAM(std::ptr::addr_of_mut!(tab_info) as isize),
+                LPARAM(addr_of_mut!(tab_info) as isize),
             ) {
                 LRESULT(0) => Err(E_FAIL.into()),
                 _ => Ok(tab_info.lParam.0 as usize),
+            }
+        }
+    }
+
+    fn get_tab_text(&self, index: usize) -> Result<String> {
+        let mut text = [0u16; 256];
+        let mut tab_info = TCITEMW {
+            mask: TCIF_TEXT,
+            pszText: PWSTR(text.as_mut_ptr()),
+            cchTextMax: 256,
+            ..Default::default()
+        };
+        let handle = self.0.borrow().handle;
+        unsafe {
+            match SendMessageW(
+                handle,
+                TCM_GETITEMW,
+                WPARAM(index),
+                LPARAM(addr_of_mut!(tab_info) as isize),
+            ) {
+                LRESULT(0) => Err(E_FAIL.into()),
+                _ => Ok(pwstr_to_string(tab_info.pszText)?),
             }
         }
     }
@@ -277,12 +296,103 @@ impl TabBarRef {
         }
     }
 
+    fn get_tab_rect(&self, index: usize) -> Result<RECT> {
+        let handle = self.0.borrow().handle;
+        let mut rect: RECT = Default::default();
+        unsafe {
+            match SendMessageW(
+                handle,
+                TCM_GETITEMRECT,
+                WPARAM(index),
+                LPARAM(addr_of_mut!(rect) as isize),
+            ) {
+                LRESULT(0) => Err(E_FAIL.into()),
+                _ => Ok(rect),
+            }
+        }
+    }
+
     fn tab_switched(&self) -> Result<()> {
         let index = self.get_selected_tab_index().ok_or(E_FAIL)?;
         log::info!("trying to switch to tab {:?}", index);
         let browser = self.0.borrow().explorer.clone();
         let tab = self.get_tab(index)?.clone();
         unsafe { browser.BrowseObject(tab.path.ok_or(E_FAIL)?, 0) }
+    }
+
+    const BG_FOCUSED_TAB: u32 = 0x4d4d4d;
+    const BG_SELECTED_TAB: u32 = 0x777777;
+    fn paint(&self, handle: HWND) -> Result<()> {
+        unsafe {
+            let mut paint_struct: PAINTSTRUCT = Default::default();
+            let mut hdc = BeginPaint(handle, addr_of_mut!(paint_struct));
+
+            {
+                let brush = CreateSolidBrush(0x191919);
+                FillRect(hdc, addr_of!(paint_struct.rcPaint), brush);
+                DeleteObject(brush);
+            }
+
+            let edge_pen = CreatePen(PS_SOLID, 1, 0x2b2b2b);
+            let hold_pen = SelectObject(hdc, edge_pen);
+
+            let selected_index = self.get_selected_tab_index();
+
+            for idx in 0..self.get_tab_count() {
+                let mut tab_rect = self.get_tab_rect(idx)?;
+                let mut intersect_rect: RECT = Default::default();
+
+                if !IntersectRect(
+                    addr_of_mut!(intersect_rect),
+                    addr_of!(paint_struct.rcPaint),
+                    addr_of!(tab_rect),
+                )
+                .as_bool()
+                {
+                    continue;
+                };
+
+                let selected = selected_index == Some(idx);
+                if !selected {
+                    tab_rect.top += 2;
+                }
+                {
+                    let brush = CreateSolidBrush(if selected {
+                        Self::BG_SELECTED_TAB
+                    } else {
+                        0x202020
+                    });
+                    FillRect(hdc, addr_of!(tab_rect), brush);
+                    DeleteObject(brush);
+                }
+
+                let edges = [
+                    POINT {
+                        x: tab_rect.right - 1,
+                        y: tab_rect.top,
+                    },
+                    POINT {
+                        x: tab_rect.right - 1,
+                        y: tab_rect.bottom,
+                    },
+                ];
+                Polyline(hdc, edges.as_ptr(), edges.len() as i32);
+
+                SetBkMode(hdc, TRANSPARENT);
+                SetTextColor(hdc, 0xffffff);
+                DrawTextW(
+                    hdc,
+                    self.get_tab_text(idx).unwrap_or_default(),
+                    -1,
+                    addr_of_mut!(tab_rect),
+                    DT_CENTER,
+                );
+            }
+            SelectObject(hdc, hold_pen);
+            DeleteObject(edge_pen);
+        }
+
+        Ok(())
     }
 
     fn window_procedure(
@@ -297,6 +407,11 @@ impl TabBarRef {
             WM_MBUTTONDOWN => self.duplicate_tab().is_ok() as i32,
             WM_LBUTTONUP => self.tab_switched().is_ok() as i32,
             WM_CLOSE => true as i32,
+            WM_PAINT => {
+                self.paint(hwnd).unwrap_or_default();
+                //unsafe { DefSubclassProc(hwnd, message, wparam, lparam).0 }
+                1
+            }
             _ => unsafe { DefSubclassProc(hwnd, message, wparam, lparam).0 },
         })
     }
