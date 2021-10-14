@@ -338,6 +338,24 @@ impl TabBarRef {
 
             let selected_index = self.get_selected_tab_index();
 
+            let font = CreateFontW(
+                16,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS,
+                CLIP_DEFAULT_PRECIS,
+                DEFAULT_QUALITY,
+                FF_DONTCARE,
+                "Segoe UI",
+            );
+            let hold_font = SelectObject(hdc, font);
+
             for idx in 0..self.get_tab_count() {
                 let mut tab_rect = self.get_tab_rect(idx)?;
                 let mut intersect_rect: RECT = Default::default();
@@ -368,6 +386,10 @@ impl TabBarRef {
 
                 let edges = [
                     POINT {
+                        x: tab_rect.left,
+                        y: tab_rect.top,
+                    },
+                    POINT {
                         x: tab_rect.right - 1,
                         y: tab_rect.top,
                     },
@@ -376,20 +398,25 @@ impl TabBarRef {
                         y: tab_rect.bottom,
                     },
                 ];
+
                 Polyline(hdc, edges.as_ptr(), edges.len() as i32);
 
+                let mut text_rect = tab_rect;
+                text_rect.top += 2;
                 SetBkMode(hdc, TRANSPARENT);
                 SetTextColor(hdc, 0xffffff);
                 DrawTextW(
                     hdc,
                     self.get_tab_text(idx).unwrap_or_default(),
                     -1,
-                    addr_of_mut!(tab_rect),
+                    addr_of_mut!(text_rect),
                     DT_CENTER,
                 );
             }
             SelectObject(hdc, hold_pen);
             DeleteObject(edge_pen);
+            SelectObject(hdc, hold_font);
+            DeleteObject(font);
         }
 
         Ok(())
