@@ -320,8 +320,13 @@ impl TabBarRef {
         unsafe { browser.BrowseObject(tab.path.ok_or(E_FAIL)?, 0) }
     }
 
+    // file under mouse : 0x4d4d4d
+    // file selected : 0x777777
+    // background : 0x191919
     const BG_FOCUSED_TAB: u32 = 0x4d4d4d;
-    const BG_SELECTED_TAB: u32 = 0x777777;
+    const BG_SELECTED_TAB: u32 = 0x191919;
+    const BG_UNFOCUSED_TAB: u32 = 0x202020;
+    const BORDER_COLOR: u32 = 0x2b2b2b;
     fn paint(&self, handle: HWND) -> Result<()> {
         unsafe {
             let mut paint_struct: PAINTSTRUCT = Default::default();
@@ -378,7 +383,7 @@ impl TabBarRef {
                     let brush = CreateSolidBrush(if selected {
                         Self::BG_SELECTED_TAB
                     } else {
-                        0x202020
+                        Self::BG_UNFOCUSED_TAB
                     });
                     FillRect(hdc, addr_of!(tab_rect), brush);
                     DeleteObject(brush);
