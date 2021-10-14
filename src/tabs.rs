@@ -1,11 +1,12 @@
 use std::cell::RefCell;
 use std::cell::RefMut;
 use std::collections::HashMap;
-use std::panic;
 use std::rc::Rc;
 
 use bindings::Windows::Win32::Foundation::*;
 use bindings::Windows::Win32::UI::Controls::*;
+use bindings::Windows::Win32::UI::Shell::DefSubclassProc;
+use bindings::Windows::Win32::UI::Shell::SetWindowSubclass;
 use bindings::Windows::Win32::UI::Shell::{
     IShellBrowser, SHGetNameFromIDList, ITEMIDLIST, SIGDN_NORMALDISPLAY,
 };
@@ -32,7 +33,6 @@ struct Obj {
     tabs: HashMap<usize, Tab>,
     tab_key_counter: usize,
 
-    default_window_procedure: Option<WNDPROC>,
     explorer: IShellBrowser,
 }
 
@@ -41,17 +41,15 @@ pub extern "system" fn tab_bar_proc(
     message: u32,
     wparam: WPARAM,
     lparam: LPARAM,
+    _uid_subclass: usize,
+    ref_data: usize,
 ) -> LRESULT {
-    let obj_ptr = unsafe {
-        match GetWindowLongPtrW(hwnd, GWLP_USERDATA) {
-            0 => panic!("Could not get user data"),
-            n => (n as *mut TabBarRef),
-        }
-    };
-
+    let obj_ptr = ref_data as *const TabBarRef;
     let obj = unsafe { &(*obj_ptr) };
     obj.window_procedure(hwnd, message, wparam, lparam)
 }
+
+const TAB_BAR_SUBCLASS_UID: usize = 42;
 
 unsafe fn pwstr_to_string(pwstr: PWSTR) -> Result<String> {
     if pwstr.0.is_null() {
@@ -85,35 +83,6 @@ fn get_tab_name(pidl: &TabPath) -> String {
         };
         name.unwrap_or_else(|_| "???".to_owned())
     }
-
-    /*
-    let mut buffer = [0u16; 256];
-    let path = PWSTR(std::ptr::addr_of_mut!(buffer[0]));
-    unsafe {
-        if !SHGetPathFromIDListW(std::ptr::addr_of!(*pidl), path).as_bool() {
-            log::error!("could not get path from idlist");
-        }
-    }
-    let path = String::from_utf16(&buffer).unwrap_or_else(|_| "???".to_owned());
-
-    let file_name = Path::new(&path)
-        .file_name()
-        .unwrap_or_default()
-        .to_owned()
-        .into_string()
-        .unwrap_or_default();
-    file_name
-    */
-
-    /*
-    file_name.or(Ok(path));
-
-    let path = Path::new(&path);
-    let file_name = path.file_name().ok_or(E_FAIL)?;
-    let file_name = file_name.to_owned().into_string();
-    let file_name = file_name.map_err(|_| Error::from(E_FAIL))?;
-    Ok(file_name)
-    */
 }
 
 impl TabBar {
@@ -140,26 +109,19 @@ impl TabBar {
             handle,
             tabs: Default::default(),
             tab_key_counter: 0,
-            default_window_procedure: None,
             explorer: browser,
         }))));
 
         unsafe {
-            let mut obj = (*ret.0).0.borrow_mut();
-
-            SetWindowLongPtrW(handle, GWLP_USERDATA, Rc::as_ptr(&ret.0) as isize);
-            let default_proc = SetWindowLongPtrW(
+            SetWindowSubclass(
                 handle,
-                GWLP_WNDPROC,
-                tab_bar_proc as WNDPROC as usize as isize,
-            );
-            if let 0 = default_proc {
-                panic!("Set wndproc failed");
-            }
-
-            log::info!("storing");
-            obj.default_window_procedure = Some(std::mem::transmute(default_proc));
-            log::info!("stored default proc 0x{:x}", default_proc);
+                Some(tab_bar_proc),
+                TAB_BAR_SUBCLASS_UID,
+                Rc::as_ptr(&ret.0) as usize,
+            )
+            .as_bool()
+            .then(|| ())
+            .expect("failed to install subclass");
         }
 
         ret
@@ -335,10 +297,7 @@ impl TabBarRef {
             WM_MBUTTONDOWN => self.duplicate_tab().is_ok() as i32,
             WM_LBUTTONUP => self.tab_switched().is_ok() as i32,
             WM_CLOSE => true as i32,
-            _ => {
-                let proc = self.0.borrow().default_window_procedure;
-                unsafe { proc.unwrap()(hwnd, message, wparam, lparam).0 }
-            }
+            _ => unsafe { DefSubclassProc(hwnd, message, wparam, lparam).0 },
         })
     }
 }

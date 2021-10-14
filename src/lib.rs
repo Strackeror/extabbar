@@ -396,16 +396,6 @@ pub unsafe extern "stdcall" fn DllGetClassObject(
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub extern "stdcall" fn DllCanUnloadNow() -> HRESULT {
-    log::info!("Check Can Unload");
-    match unsafe { DLL_LOCK } > 0 {
-        true => S_FALSE,
-        false => S_OK,
-    }
-}
-
-#[no_mangle]
-#[allow(non_snake_case)]
 pub extern "stdcall" fn DllRegisterServer() -> HRESULT {
     S_OK
 }
