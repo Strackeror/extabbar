@@ -34,7 +34,7 @@ static mut DLL_LOCK: i32 = 0;
 #[implement(Windows::Win32::System::WindowsProgramming::DWebBrowserEvents2)]
 #[derive(Clone)]
 struct BrowserEventHandler {
-    tab_bar: tabs::TabBar,
+    tab_bar: Rc<tabs::TabBar>,
     browser: IShellBrowser,
 }
 
@@ -150,7 +150,7 @@ struct DeskBandData {
     //p_site: Rc<IUnknown>,
     p_input_object_site: Rc<IInputObjectSite>,
 
-    tab_bar: tabs::TabBar,
+    tab_bar: Rc<tabs::TabBar>,
 }
 
 #[implement(Windows::Win32::System::Com::{IObjectWithSite},  Windows::Win32::UI::Shell::{IDeskBand})]
