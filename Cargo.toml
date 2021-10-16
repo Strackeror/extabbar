@@ -8,6 +8,7 @@ edition = "2018"
 [dependencies]
 bindings = { path = "bindings" }
 chrono = "0.4.19"
+detour = { version = "0.8.1", default-features = false }
 fern = "0.6.0"
 log = "0.4.14"
 windows = "0.21.1"

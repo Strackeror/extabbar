@@ -1,5 +1,6 @@
 #![allow(clippy::forget_copy)]
 
+mod detour;
 mod tabs;
 
 use std::ffi::c_void;
@@ -11,7 +12,7 @@ use bindings::Windows::Win32::System::WindowsProgramming::{
     DWebBrowserEvents2, IWebBrowser2, IWebBrowserApp,
 };
 use bindings::Windows::Win32::UI::WindowsAndMessaging::{
-    DestroyWindow, ShowWindow, SW_HIDE, SW_SHOW,
+    DestroyWindow, RegisterWindowMessageW, ShowWindow, SW_HIDE, SW_SHOW,
 };
 use bindings::*;
 use windows::*;
@@ -32,6 +33,7 @@ const EXT_TAB_GUID: Guid = Guid::from_values(
 );
 
 static mut DLL_LOCK: i32 = 0;
+const BROWSE_OBJECT_MESSAGE: &str = "extabbar_BrowseObject";
 
 #[implement(Windows::Win32::System::WindowsProgramming::DWebBrowserEvents2)]
 #[derive(Clone)]
@@ -191,7 +193,7 @@ impl DeskBand {
 
         let browser_event_handler = BrowserEventHandler {
             tab_bar: tab_bar.clone(),
-            browser: shell_browser,
+            browser: shell_browser.clone(),
         };
         let container = web_browser.cast::<IConnectionPointContainer>()?;
 
@@ -206,6 +208,9 @@ impl DeskBand {
             tab_bar,
             p_input_object_site: Rc::new(input_object_site),
         });
+
+        let message_id = RegisterWindowMessageW(BROWSE_OBJECT_MESSAGE);
+        detour::hook_browse_object(shell_browser, message_id);
 
         log::info!("Set Site Ok");
         Ok(())
