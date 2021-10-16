@@ -21,6 +21,8 @@ use bindings::Windows::Win32::System::Com::{IConnectionPointContainer, IOleWindo
 use bindings::Windows::Win32::System::OleAutomation::*;
 use bindings::Windows::Win32::UI::Shell::*;
 
+use crate::tabs::tab_bar::DLL_INSTANCE;
+
 // {9ecce421-925a-4484-b2cf-c00b182bc32a}
 const EXT_TAB_GUID: Guid = Guid::from_values(
     0x9ecce421,
@@ -34,7 +36,7 @@ static mut DLL_LOCK: i32 = 0;
 #[implement(Windows::Win32::System::WindowsProgramming::DWebBrowserEvents2)]
 #[derive(Clone)]
 struct BrowserEventHandler {
-    tab_bar: Rc<tabs::TabBar>,
+    tab_bar: Rc<tabs::tab_bar::TabBar>,
     browser: IShellBrowser,
 }
 
@@ -150,7 +152,7 @@ struct DeskBandData {
     //p_site: Rc<IUnknown>,
     p_input_object_site: Rc<IInputObjectSite>,
 
-    tab_bar: Rc<tabs::TabBar>,
+    tab_bar: Rc<tabs::tab_bar::TabBar>,
 }
 
 #[implement(Windows::Win32::System::Com::{IObjectWithSite},  Windows::Win32::UI::Shell::{IDeskBand})]
@@ -182,7 +184,7 @@ impl DeskBand {
             .cast::<IOleWindow>()?
             .GetWindow()?;
 
-        let tab_bar = tabs::TabBar::new(parent_window_handle, shell_browser.clone());
+        let tab_bar = tabs::tab_bar::TabBar::new(parent_window_handle, shell_browser.clone());
         tab_bar.add_tab(get_current_folder_pidl(&shell_browser).ok(), 0)?;
 
         log::info!("Connecting to event handler");
@@ -372,7 +374,7 @@ pub extern "system" fn DllMain(instance: HINSTANCE, dw_reason: u32, _lpv_reserve
 
         // Make this safe at some point
         unsafe {
-            tabs::DLL_INSTANCE = Some(instance);
+            DLL_INSTANCE = Some(instance);
         }
     }
     true.into()
