@@ -211,6 +211,7 @@ impl DeskBand {
 
         let message_id = RegisterWindowMessageW(BROWSE_OBJECT_MESSAGE);
         detour::hook_browse_object(shell_browser, message_id);
+        detour::hook_show_window();
 
         log::info!("Set Site Ok");
         Ok(())
@@ -304,7 +305,7 @@ impl DeskBand {
         }
 
         if desk_band_info.dwMask & DBIM_MODEFLAGS != 0 {
-            desk_band_info.dwModeFlags = DBIMF_NORMAL;
+            desk_band_info.dwModeFlags = DBIMF_NORMAL | DBIMF_BKCOLOR | DBIMF_NOMARGINS;
         }
 
         if desk_band_info.dwMask & DBIM_BKCOLOR != 0 {
