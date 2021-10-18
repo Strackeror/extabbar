@@ -142,6 +142,14 @@ impl TabControl {
         }
     }
 
+    pub fn set_selected_tab(&self, idx: TabIndex) -> Result<()> {
+        let handle = self.handle;
+        match unsafe { SendMessageW(handle, TCM_SETCURSEL, WPARAM(idx), LPARAM(0)).0 } {
+            -1 => E_FAIL.ok(),
+            _ => Ok(()),
+        }
+    }
+
     pub fn get_tab_count(&self) -> usize {
         let handle = self.handle;
         unsafe { SendMessageW(handle, TCM_GETITEMCOUNT, WPARAM(0), LPARAM(0)).0 as usize }
@@ -341,7 +349,7 @@ impl TabControl {
                 }
                 WM_MBUTTONDOWN => tab_bar.clone_tab(self.get_selected_tab_index().unwrap_or(0)),
                 WM_RBUTTONUP => tab_bar.remove_tab(self.get_selected_tab_index().unwrap_or(0)),
-                WM_LBUTTONUP => tab_bar.tab_switched(),
+                WM_LBUTTONUP => tab_bar.switch_to_current_tab(),
                 _ => Ok(()),
             };
 

@@ -6,6 +6,7 @@ use bindings::Windows::Win32::Foundation::*;
 use bindings::Windows::Win32::UI::Shell::*;
 use windows::Result;
 
+use super::explorer_subclass::ExplorerSubclass;
 use super::tab_control::{pwstr_to_string, TabControl};
 
 pub static mut DLL_INSTANCE: Option<HINSTANCE> = None;
@@ -29,6 +30,7 @@ struct TabBar_ {
     tab_key_counter: TabKey,
 
     tab_control: Option<Box<TabControl>>,
+    explorer_subclass: Option<Box<ExplorerSubclass>>,
 
     explorer: IShellBrowser,
 }
@@ -55,11 +57,14 @@ impl TabBar {
             tabs: Default::default(),
             tab_key_counter: 0,
             tab_control: None,
+            explorer_subclass: None,
             explorer: browser,
         };
         let new = Rc::new(TabBar(RefCell::new(new)));
         let tab_control = TabControl::new(parent, Rc::downgrade(&new));
         new.0.borrow_mut().tab_control = Some(tab_control);
+        new.0.borrow_mut().explorer_subclass =
+            Some(ExplorerSubclass::new(parent, Rc::downgrade(&new)));
         new
     }
 
@@ -130,9 +135,14 @@ impl TabBar {
         Ok(())
     }
 
-    pub fn tab_switched(&self) -> Result<()> {
+    pub fn switch_to_current_tab(&self) -> Result<()> {
         let index = self.tab_control().get_selected_tab_index().ok_or(E_FAIL)?;
+        self.switch_tab(index)
+    }
+
+    pub fn switch_tab(&self, index: TabIndex) -> Result<()> {
         log::info!("trying to switch to tab {:?}", index);
+        self.tab_control().set_selected_tab(index)?;
         let browser = self.0.borrow().explorer.clone();
         let tab = self.get_tab(index).ok_or(E_FAIL)?.clone();
         unsafe { browser.BrowseObject(tab.current_path.ok_or(E_FAIL)?, 0) }
@@ -145,6 +155,8 @@ impl TabBar {
     }
 
     pub fn new_window(&self, path: TabPath) -> Result<()> {
-        self.add_tab(path, self.tab_control().get_tab_count() as usize)
+        let idx = self.tab_control().get_tab_count();
+        self.add_tab(path, self.tab_control().get_tab_count() as usize)?;
+        self.switch_tab(idx)
     }
 }

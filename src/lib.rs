@@ -4,7 +4,7 @@ mod detour;
 mod tabs;
 
 use std::ffi::c_void;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use bindings::Windows::Win32::System::LibraryLoader::DisableThreadLibraryCalls;
 use bindings::Windows::Win32::System::SystemServices::IServiceProvider;
@@ -33,16 +33,18 @@ const EXT_TAB_GUID: Guid = Guid::from_values(
 );
 
 static mut DLL_LOCK: i32 = 0;
-const BROWSE_OBJECT_MESSAGE: &str = "extabbar_BrowseObject";
+
+pub const BROWSE_OBJECT_MESSAGE: &str = "extabbar_BrowseObject";
+pub const SHOW_WINDOW_MESSAGE: &str = "extabbar_ShowWindow";
 
 #[implement(Windows::Win32::System::WindowsProgramming::DWebBrowserEvents2)]
 #[derive(Clone)]
 struct BrowserEventHandler {
-    tab_bar: Rc<tabs::tab_bar::TabBar>,
+    tab_bar: Weak<tabs::tab_bar::TabBar>,
     browser: IShellBrowser,
 }
 
-fn get_current_folder_pidl(browser: &IShellBrowser) -> Result<*mut ITEMIDLIST> {
+pub fn get_current_folder_pidl(browser: &IShellBrowser) -> Result<*mut ITEMIDLIST> {
     unsafe {
         let folder_view: IFolderView = browser.QueryActiveShellView()?.cast()?;
         let folder = folder_view.GetFolder::<IPersistFolder2>()?;
@@ -95,7 +97,7 @@ impl BrowserEventHandler {
 
     fn NavigateComplete(&self, params: &[VARIANT]) -> Result<VARIANT> {
         let path = get_current_folder_pidl(&self.browser);
-        self.tab_bar.navigated(path.ok())?;
+        self.tab_bar.upgrade().unwrap().navigated(path.ok())?;
 
         Ok(Default::default())
     }
@@ -192,7 +194,7 @@ impl DeskBand {
         log::info!("Connecting to event handler");
 
         let browser_event_handler = BrowserEventHandler {
-            tab_bar: tab_bar.clone(),
+            tab_bar: Rc::downgrade(&tab_bar),
             browser: shell_browser.clone(),
         };
         let container = web_browser.cast::<IConnectionPointContainer>()?;
@@ -211,7 +213,7 @@ impl DeskBand {
 
         let message_id = RegisterWindowMessageW(BROWSE_OBJECT_MESSAGE);
         detour::hook_browse_object(shell_browser, message_id);
-        detour::hook_show_window();
+        detour::hook_show_window(parent_window_handle);
 
         log::info!("Set Site Ok");
         Ok(())
