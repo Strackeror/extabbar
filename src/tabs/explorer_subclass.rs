@@ -3,12 +3,15 @@ use std::rc::Weak;
 use bindings::Windows::Win32::{
     Foundation::*,
     UI::{
-        Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
+        Shell::{
+            DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass, SBSP_NAVIGATEBACK,
+            SBSP_NAVIGATEFORWARD,
+        },
         WindowsAndMessaging::RegisterWindowMessageW,
     },
 };
 
-use crate::SHOW_WINDOW_MESSAGE;
+use crate::{BROWSE_OBJECT_MESSAGE, SHOW_WINDOW_MESSAGE};
 
 use super::tab_bar::TabBar;
 
@@ -17,6 +20,7 @@ pub struct ExplorerSubclass {
     tab_bar: Weak<TabBar>,
 
     show_window_message_id: u32,
+    browse_object_message_id: u32,
 }
 
 impl ExplorerSubclass {
@@ -40,7 +44,13 @@ impl ExplorerSubclass {
             explorer_handle,
             tab_bar,
             show_window_message_id: unsafe { RegisterWindowMessageW(SHOW_WINDOW_MESSAGE) },
+            browse_object_message_id: unsafe { RegisterWindowMessageW(BROWSE_OBJECT_MESSAGE) },
         });
+
+        log::info!(
+            "new explorer subclass browse_object_id:{}",
+            new.browse_object_message_id
+        );
 
         unsafe {
             SetWindowSubclass(
@@ -64,13 +74,29 @@ impl ExplorerSubclass {
         lparam: LPARAM,
     ) -> LRESULT {
         if message == self.show_window_message_id {
-            let should_open = self
+            let block_open = self
                 .tab_bar
                 .upgrade()
                 .unwrap()
                 .new_window(Some(lparam.0 as _))
                 .is_ok();
-            return LRESULT(should_open as _);
+            return LRESULT(block_open as _);
+        }
+        if message == self.browse_object_message_id {
+            let flags = wparam.0 as *mut u32;
+            let flags = unsafe { *flags };
+            log::info!("received browse object {:#x?}", flags);
+            if flags & SBSP_NAVIGATEBACK != 0 {
+                log::debug!("received navigate back");
+                let _ = self.tab_bar.upgrade().unwrap().navigate_back();
+                return LRESULT(1);
+            }
+            if flags & SBSP_NAVIGATEFORWARD != 0 {
+                log::debug!("received navigate forward");
+                let _ = self.tab_bar.upgrade().unwrap().navigate_forward();
+                return LRESULT(1);
+            }
+            return LRESULT(0);
         }
         unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
     }

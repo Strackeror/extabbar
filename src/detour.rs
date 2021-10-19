@@ -1,7 +1,7 @@
 use std::ffi::c_void;
 
 use bindings::Windows::Win32::{
-    Foundation::{HWND, LPARAM, POINT, WPARAM},
+    Foundation::{E_FAIL, HWND, LPARAM, LRESULT, POINT, WPARAM},
     System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
     UI::{
         Shell::{IShellBrowser, ITEMIDLIST},
@@ -10,7 +10,7 @@ use bindings::Windows::Win32::{
 };
 use windows::*;
 
-use crate::SHOW_WINDOW_MESSAGE;
+use crate::{BROWSE_OBJECT_MESSAGE, SHOW_WINDOW_MESSAGE};
 
 static mut MESSAGE_ID_BROWSE_OBJECT: u32 = 0;
 static mut DETOUR_BROWSE_OBJECT: Option<detour::RawDetour> = None;
@@ -26,6 +26,7 @@ unsafe extern "stdcall" fn browse_object_detour(
     let res = || -> Result<_> {
         let shell_browser = IShellBrowser::from_abi(this)?;
         let window = shell_browser.GetWindow()?;
+        log::info!("Send message {:?} {:?}", MESSAGE_ID_BROWSE_OBJECT, window);
         let res = SendMessageW(
             window,
             MESSAGE_ID_BROWSE_OBJECT,
@@ -34,31 +35,36 @@ unsafe extern "stdcall" fn browse_object_detour(
         );
         Ok(res)
     }();
+    if res == Ok(LRESULT(1)) {
+        return HRESULT::default();
+    }
 
     let base: BrowseObjectFn =
         std::mem::transmute(DETOUR_BROWSE_OBJECT.as_ref().unwrap().trampoline());
     base(this, pidl, w_flags)
 }
 
-pub unsafe fn hook_browse_object(browser: IShellBrowser, message_id: u32) {
-    log::info!("hook browse object {:?}", message_id);
-    if MESSAGE_ID_BROWSE_OBJECT != message_id {
-        MESSAGE_ID_BROWSE_OBJECT = message_id;
-        //let mut hook = BrowseObjectDetour::new(hooked_function, browse_object_hook);
-
-        DETOUR_BROWSE_OBJECT =
-            detour::RawDetour::new(browser.vtable().11 as _, browse_object_detour as _)
-                .map_err(|op| {
-                    log::error!("error hook:{:?}", &op);
-                    op
-                })
-                .ok();
-        DETOUR_BROWSE_OBJECT
-            .as_ref()
-            .unwrap()
-            .enable()
-            .expect("failed to enable hook");
+pub unsafe fn hook_browse_object(browser: IShellBrowser) {
+    if DETOUR_BROWSE_OBJECT.is_some() {
+        return;
     }
+
+    MESSAGE_ID_BROWSE_OBJECT = RegisterWindowMessageW(BROWSE_OBJECT_MESSAGE);
+    log::info!("hook browse object {:?}", MESSAGE_ID_BROWSE_OBJECT);
+
+    DETOUR_BROWSE_OBJECT =
+        detour::RawDetour::new(browser.vtable().11 as _, browse_object_detour as _)
+            .map_err(|op| {
+                log::error!("error hook:{:?}", &op);
+                op
+            })
+            .ok();
+    DETOUR_BROWSE_OBJECT
+        .as_ref()
+        .unwrap()
+        .enable()
+        .expect("failed to enable hook");
+
     log::info!("hook status: {:?}", DETOUR_BROWSE_OBJECT);
 }
 
@@ -88,10 +94,6 @@ unsafe extern "system" fn show_window_detour(
     unkn4: u64,
 ) -> HRESULT {
     let base: ShowWindowFn = std::mem::transmute(DETOUR_SHOW_WINDOW.as_ref().unwrap().trampoline());
-    log::info!(
-        "Show new window {:?}",
-        (this, pidl, flags, pt, &base as *const _)
-    );
     let handle = SHOW_WINDOW_EXPLORER_HANDLE.unwrap();
     let result = SendMessageW(
         handle,
@@ -101,8 +103,24 @@ unsafe extern "system" fn show_window_detour(
     )
     .0;
 
+    log::info!(
+        "Show new window hook {:?}",
+        (
+            ("handle", handle,),
+            this,
+            pidl,
+            flags,
+            pt,
+            &base as *const _,
+            result
+        )
+    );
+
     match result {
-        0 => base(this, pidl, flags, pt, unkn, unkn2, unkn3, unkn4),
+        0 => {
+            log::info!("Creating new window");
+            base(this, pidl, flags, pt, unkn, unkn2, unkn3, unkn4)
+        }
         _ => HRESULT::default(),
     }
 }

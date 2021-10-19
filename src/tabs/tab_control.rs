@@ -88,7 +88,7 @@ impl TabControl {
         new
     }
 
-    pub fn add_tab(&self, title: String, idx: TabIndex, key: TabKey) -> Result<()> {
+    pub fn add_tab(&self, title: String, index: TabIndex, key: TabKey) -> Result<()> {
         let handle = self.handle;
         let mut text: Vec<_> = title.encode_utf16().collect();
         text.push(0);
@@ -104,7 +104,7 @@ impl TabControl {
             SendMessageW(
                 handle,
                 TCM_INSERTITEMW,
-                WPARAM(idx),
+                WPARAM(index),
                 LPARAM(addr_of!(tab_info) as isize),
             )
         };
@@ -116,7 +116,7 @@ impl TabControl {
         Ok(())
     }
 
-    pub fn set_tab_title(&self, idx: TabIndex, title: String) -> Result<()> {
+    pub fn set_tab_title(&self, index: TabIndex, title: String) -> Result<()> {
         let handle = self.handle;
 
         let mut text: Vec<_> = title.encode_utf16().collect();
@@ -132,7 +132,7 @@ impl TabControl {
             SendMessageW(
                 handle,
                 TCM_SETITEMW,
-                WPARAM(idx),
+                WPARAM(index),
                 LPARAM(addr_of!(tab_info) as isize),
             )
         };
@@ -142,9 +142,9 @@ impl TabControl {
         }
     }
 
-    pub fn set_selected_tab(&self, idx: TabIndex) -> Result<()> {
+    pub fn set_selected_tab(&self, index: TabIndex) -> Result<()> {
         let handle = self.handle;
-        match unsafe { SendMessageW(handle, TCM_SETCURSEL, WPARAM(idx), LPARAM(0)).0 } {
+        match unsafe { SendMessageW(handle, TCM_SETCURSEL, WPARAM(index), LPARAM(0)).0 } {
             -1 => E_FAIL.ok(),
             _ => Ok(()),
         }
@@ -268,8 +268,8 @@ impl TabControl {
             );
             let hold_font = SelectObject(hdc, font);
 
-            for idx in 0..self.get_tab_count() {
-                let mut tab_rect = self.get_tab_rect(idx)?;
+            for index in 0..self.get_tab_count() {
+                let mut tab_rect = self.get_tab_rect(index)?;
                 let mut intersect_rect: RECT = Default::default();
 
                 if !IntersectRect(
@@ -282,7 +282,7 @@ impl TabControl {
                     continue;
                 };
 
-                let selected = selected_index == Some(idx);
+                let selected = selected_index == Some(index);
                 if !selected {
                     tab_rect.top += 2;
                 }
@@ -319,7 +319,7 @@ impl TabControl {
                 SetTextColor(hdc, 0xffffff);
                 DrawTextW(
                     hdc,
-                    self.get_tab_text(idx).unwrap_or_default(),
+                    self.get_tab_text(index).unwrap_or_default(),
                     -1,
                     addr_of_mut!(text_rect),
                     DT_CENTER,

@@ -12,7 +12,7 @@ use bindings::Windows::Win32::System::WindowsProgramming::{
     DWebBrowserEvents2, IWebBrowser2, IWebBrowserApp,
 };
 use bindings::Windows::Win32::UI::WindowsAndMessaging::{
-    DestroyWindow, RegisterWindowMessageW, ShowWindow, SW_HIDE, SW_SHOW,
+    DestroyWindow, ShowWindow, SW_HIDE, SW_SHOW,
 };
 use bindings::*;
 use windows::*;
@@ -188,7 +188,13 @@ impl DeskBand {
             .cast::<IOleWindow>()?
             .GetWindow()?;
 
-        let tab_bar = tabs::tab_bar::TabBar::new(parent_window_handle, shell_browser.clone());
+        let explorer_handle = shell_browser.GetWindow()?;
+
+        let tab_bar = tabs::tab_bar::TabBar::new(
+            parent_window_handle,
+            explorer_handle,
+            shell_browser.clone(),
+        );
         tab_bar.add_tab(get_current_folder_pidl(&shell_browser).ok(), 0)?;
 
         log::info!("Connecting to event handler");
@@ -211,9 +217,8 @@ impl DeskBand {
             p_input_object_site: Rc::new(input_object_site),
         });
 
-        let message_id = RegisterWindowMessageW(BROWSE_OBJECT_MESSAGE);
-        detour::hook_browse_object(shell_browser, message_id);
-        detour::hook_show_window(parent_window_handle);
+        detour::hook_browse_object(shell_browser);
+        detour::hook_show_window(explorer_handle);
 
         log::info!("Set Site Ok");
         Ok(())
