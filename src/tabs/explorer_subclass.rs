@@ -83,7 +83,6 @@ impl ExplorerSubclass {
             return LRESULT(block_open as _);
         }
         if message == self.browse_object_message_id {
-            /*
             let flags = wparam.0 as *mut u32;
             let flags = unsafe { *flags };
             if flags & SBSP_NAVIGATEBACK != 0 {
@@ -96,7 +95,6 @@ impl ExplorerSubclass {
                 let _ = self.tab_bar.upgrade().unwrap().navigate_forward();
                 return LRESULT(1);
             }
-            */
             return LRESULT(0);
         }
         unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }

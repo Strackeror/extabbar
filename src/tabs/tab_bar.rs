@@ -184,12 +184,7 @@ impl TabBar {
 
     fn browse_to(&self, path: TabPath) -> Result<()> {
         let browser = self.0.borrow().explorer.clone();
-        unsafe {
-            browser.BrowseObject(
-                path.ok_or(E_FAIL)?.get(),
-                SBSP_SAMEBROWSER | SBSP_WRITENOHISTORY,
-            )
-        }
+        unsafe { browser.BrowseObject(path.ok_or(E_FAIL)?.get(), SBSP_SAMEBROWSER) }
     }
 
     pub fn switch_to_current_tab(&self) -> Result<()> {
