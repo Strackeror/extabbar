@@ -1,7 +1,7 @@
 use std::ffi::c_void;
 
 use bindings::Windows::Win32::{
-    Foundation::{E_FAIL, HWND, LPARAM, LRESULT, POINT, WPARAM},
+    Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
     System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
     UI::{
         Shell::{IShellBrowser, ITEMIDLIST},
@@ -23,21 +23,20 @@ unsafe extern "stdcall" fn browse_object_detour(
     pidl: *const ITEMIDLIST,
     mut w_flags: u32,
 ) -> HRESULT {
-    let res = || -> Result<_> {
-        let shell_browser = IShellBrowser::from_abi(this)?;
-        let window = shell_browser.GetWindow()?;
-        log::info!("Send message {:?} {:?}", MESSAGE_ID_BROWSE_OBJECT, window);
-        let res = SendMessageW(
-            window,
-            MESSAGE_ID_BROWSE_OBJECT,
-            WPARAM(&mut w_flags as *mut _ as _),
-            LPARAM(pidl as _),
-        );
-        Ok(res)
-    }();
-    if res == Ok(LRESULT(1)) {
-        return HRESULT::default();
-    }
+    // let res = || -> Result<_> {
+    //     let shell_browser = IShellBrowser::from_abi(this)?;
+    //     let window = shell_browser.GetWindow()?;
+    //     let res = SendMessageW(
+    //         window,
+    //         MESSAGE_ID_BROWSE_OBJECT,
+    //         WPARAM(&mut w_flags as *mut _ as _),
+    //         LPARAM(pidl as _),
+    //     );
+    //     Ok(res)
+    // }();
+    // if res == Ok(LRESULT(1)) {
+    //     return HRESULT::default();
+    // }
 
     let base: BrowseObjectFn =
         std::mem::transmute(DETOUR_BROWSE_OBJECT.as_ref().unwrap().trampoline());

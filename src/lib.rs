@@ -1,6 +1,7 @@
 #![allow(clippy::forget_copy)]
 
 mod detour;
+mod idl;
 mod tabs;
 
 use std::ffi::c_void;
@@ -15,6 +16,7 @@ use bindings::Windows::Win32::UI::WindowsAndMessaging::{
     DestroyWindow, ShowWindow, SW_HIDE, SW_SHOW,
 };
 use bindings::*;
+use tabs::tab_bar::get_current_folder_path;
 use windows::*;
 
 use bindings::Windows::Win32::Foundation::*;
@@ -42,18 +44,6 @@ pub const SHOW_WINDOW_MESSAGE: &str = "extabbar_ShowWindow";
 struct BrowserEventHandler {
     tab_bar: Weak<tabs::tab_bar::TabBar>,
     browser: IShellBrowser,
-}
-
-pub fn get_current_folder_pidl(browser: &IShellBrowser) -> Result<*mut ITEMIDLIST> {
-    unsafe {
-        let folder_view: IFolderView = browser.QueryActiveShellView()?.cast()?;
-        let folder = folder_view.GetFolder::<IPersistFolder2>()?;
-        let folder_pidl = folder.GetCurFolder();
-        if folder_pidl.is_err() {
-            log::error!("Could not get pidl for current path");
-        }
-        folder_pidl
-    }
 }
 
 fn query_service_provider<T>(service_provider: &IServiceProvider) -> Result<T>
@@ -96,8 +86,8 @@ impl BrowserEventHandler {
     }
 
     fn NavigateComplete(&self, params: &[VARIANT]) -> Result<VARIANT> {
-        let path = get_current_folder_pidl(&self.browser);
-        self.tab_bar.upgrade().unwrap().navigated(path.ok())?;
+        let path = get_current_folder_path(&self.browser);
+        self.tab_bar.upgrade().unwrap().navigated(path)?;
 
         Ok(Default::default())
     }
@@ -169,7 +159,7 @@ struct DeskBand {
 impl DeskBand {
     // IObjectWithSite
     pub unsafe fn SetSite(&mut self, unknown_site: &Option<IUnknown>) -> Result<()> {
-        log::info!("Set Site");
+        log::info!("Set Site, data active:{:?}", self.data.is_some());
         self.data = None;
 
         log::info!("Getting object site");
@@ -195,7 +185,7 @@ impl DeskBand {
             explorer_handle,
             shell_browser.clone(),
         );
-        tab_bar.add_tab(get_current_folder_pidl(&shell_browser).ok(), 0)?;
+        tab_bar.add_tab(get_current_folder_path(&shell_browser), 0)?;
 
         log::info!("Connecting to event handler");
 

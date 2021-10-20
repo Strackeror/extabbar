@@ -4,7 +4,9 @@ use std::rc::Rc;
 
 use bindings::Windows::Win32::Foundation::*;
 use bindings::Windows::Win32::UI::Shell::*;
-use windows::Result;
+use windows::{Interface, Result};
+
+use crate::idl::Idl;
 
 use super::explorer_subclass::ExplorerSubclass;
 use super::tab_control::{pwstr_to_string, TabControl};
@@ -12,7 +14,7 @@ use super::tab_control::{pwstr_to_string, TabControl};
 pub static mut DLL_INSTANCE: Option<HINSTANCE> = None;
 
 // A possible path for a tab
-pub type TabPath = Option<*mut ITEMIDLIST>;
+pub type TabPath = Option<Idl>;
 
 pub type TabKey = usize;
 pub type TabIndex = usize;
@@ -42,12 +44,24 @@ fn get_tab_name(pidl: &TabPath) -> String {
     };
 
     unsafe {
-        let name = SHGetNameFromIDList(*pidl, SIGDN_NORMALDISPLAY);
+        let name = SHGetNameFromIDList(pidl.get(), SIGDN_NORMALDISPLAY);
         let name = match name {
             Ok(name) => pwstr_to_string(name),
             Err(_) => return String::new(),
         };
         name.unwrap_or_else(|_| "???".to_owned())
+    }
+}
+
+pub fn get_current_folder_path(browser: &IShellBrowser) -> TabPath {
+    unsafe {
+        let folder_view: IFolderView = browser.QueryActiveShellView().ok()?.cast().ok()?;
+        let folder = folder_view.GetFolder::<IPersistFolder2>().ok()?;
+        let folder_pidl = folder.GetCurFolder();
+        if folder_pidl.is_err() {
+            log::error!("Could not get pidl for current path");
+        }
+        Some(Idl::new(folder_pidl.ok()?))
     }
 }
 
@@ -105,7 +119,7 @@ impl TabBar {
     }
 
     pub fn add_tab(&self, path: TabPath, index: usize) -> Result<()> {
-        let key = self.add_tab_entry(path);
+        let key = self.add_tab_entry(path.clone());
         self.tab_control().add_tab(get_tab_name(&path), index, key)
     }
 
@@ -122,17 +136,23 @@ impl TabBar {
     }
 
     pub fn navigated(&self, path: TabPath) -> Result<()> {
-        if let Some(index) = self.tab_control().get_selected_tab_index() {
-            {
-                let mut tab = self.get_tab(index).ok_or(E_FAIL)?;
+        let index = self.tab_control().get_selected_tab_index().ok_or(E_FAIL)?;
+        log::info!(
+            "tab {:?}, navigated to {:?}",
+            index,
+            path.as_ref().map(|n| n.get())
+        );
+        {
+            let mut tab = self.get_tab(index).ok_or(E_FAIL)?;
+            let current_path = tab.current_path.clone();
+            if tab.current_path != path && tab.current_path.is_some() {
                 tab.forward_paths.clear();
-                let current_path = tab.current_path;
                 tab.backward_paths.push(current_path);
-                tab.current_path = path;
             }
-            self.tab_control()
-                .set_tab_title(index, get_tab_name(&path))?;
+            tab.current_path = path.clone();
         }
+        self.tab_control()
+            .set_tab_title(index, get_tab_name(&path))?;
         Ok(())
     }
 
@@ -140,9 +160,10 @@ impl TabBar {
         let index = self.tab_control().get_selected_tab_index().ok_or(E_FAIL)?;
 
         let mut tab = self.get_tab(index).ok_or(E_FAIL)?;
-        let current_path = tab.current_path;
-        tab.forward_paths.push(current_path);
+        let current_path = tab.current_path.clone();
         let next_path = tab.backward_paths.pop().ok_or(E_FAIL)?;
+        tab.forward_paths.push(current_path);
+        tab.current_path = next_path.clone();
         std::mem::drop(tab);
 
         self.browse_to(next_path)
@@ -152,9 +173,10 @@ impl TabBar {
         let index = self.tab_control().get_selected_tab_index().ok_or(E_FAIL)?;
 
         let mut tab = self.get_tab(index).ok_or(E_FAIL)?;
-        let current_path = tab.current_path;
-        tab.backward_paths.push(current_path);
+        let current_path = tab.current_path.clone();
         let next_path = tab.forward_paths.pop().ok_or(E_FAIL)?;
+        tab.backward_paths.push(current_path);
+        tab.current_path = next_path.clone();
         std::mem::drop(tab);
 
         self.browse_to(next_path)
@@ -162,7 +184,12 @@ impl TabBar {
 
     fn browse_to(&self, path: TabPath) -> Result<()> {
         let browser = self.0.borrow().explorer.clone();
-        unsafe { browser.BrowseObject(path.ok_or(E_FAIL)?, SBSP_SAMEBROWSER | SBSP_WRITENOHISTORY) }
+        unsafe {
+            browser.BrowseObject(
+                path.ok_or(E_FAIL)?.get(),
+                SBSP_SAMEBROWSER | SBSP_WRITENOHISTORY,
+            )
+        }
     }
 
     pub fn switch_to_current_tab(&self) -> Result<()> {

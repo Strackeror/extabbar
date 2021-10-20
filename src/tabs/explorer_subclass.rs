@@ -11,7 +11,7 @@ use bindings::Windows::Win32::{
     },
 };
 
-use crate::{BROWSE_OBJECT_MESSAGE, SHOW_WINDOW_MESSAGE};
+use crate::{idl::Idl, BROWSE_OBJECT_MESSAGE, SHOW_WINDOW_MESSAGE};
 
 use super::tab_bar::TabBar;
 
@@ -78,14 +78,14 @@ impl ExplorerSubclass {
                 .tab_bar
                 .upgrade()
                 .unwrap()
-                .new_window(Some(lparam.0 as _))
+                .new_window(Some(Idl::new(lparam.0 as _)))
                 .is_ok();
             return LRESULT(block_open as _);
         }
         if message == self.browse_object_message_id {
+            /*
             let flags = wparam.0 as *mut u32;
             let flags = unsafe { *flags };
-            log::info!("received browse object {:#x?}", flags);
             if flags & SBSP_NAVIGATEBACK != 0 {
                 log::debug!("received navigate back");
                 let _ = self.tab_bar.upgrade().unwrap().navigate_back();
@@ -96,6 +96,7 @@ impl ExplorerSubclass {
                 let _ = self.tab_bar.upgrade().unwrap().navigate_forward();
                 return LRESULT(1);
             }
+            */
             return LRESULT(0);
         }
         unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
