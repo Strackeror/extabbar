@@ -13,7 +13,7 @@ use bindings::Windows::Win32::System::WindowsProgramming::{
     DWebBrowserEvents2, IWebBrowser2, IWebBrowserApp,
 };
 use bindings::Windows::Win32::UI::WindowsAndMessaging::{
-    DestroyWindow, ShowWindow, SW_HIDE, SW_SHOW,
+    DestroyWindow, EnumChildWindows, FindWindowExW, GetClassNameW, ShowWindow, SW_HIDE, SW_SHOW,
 };
 use bindings::*;
 use tabs::tab_bar::get_current_folder_path;
@@ -44,6 +44,39 @@ pub const SHOW_WINDOW_MESSAGE: &str = "extabbar_ShowWindow";
 struct BrowserEventHandler {
     tab_bar: Weak<tabs::tab_bar::TabBar>,
     browser: IShellBrowser,
+}
+
+fn find_travel_toolbar(explorer_handle: HWND) -> Result<HWND> {
+    let mut enum_output = HWND(0);
+    unsafe extern "system" fn enum_proc(hwnd: HWND, param: LPARAM) -> BOOL {
+        let mut wstr = [0u16; 256];
+        let size = GetClassNameW(hwnd, PWSTR(wstr.as_mut_ptr()), 256) as usize;
+        let string = String::from_utf16_lossy(&wstr[0..size]);
+
+        // let string = match string {
+        //     Err(_) => return BOOL(1),
+        //     Ok(s) => s,
+        // };
+        log::info!("found class:{}", string);
+
+        if string != "TravelBand" {
+            return BOOL(1);
+        }
+        *(param.0 as *mut HWND) = hwnd;
+        BOOL(0)
+    }
+
+    unsafe {
+        EnumChildWindows(
+            explorer_handle,
+            Some(enum_proc),
+            LPARAM(&mut enum_output as *mut _ as isize),
+        );
+        match FindWindowExW(enum_output, HWND(0), "ToolbarWindow32", PWSTR::default()) {
+            HWND(0) => Err(E_FAIL.into()),
+            hwnd => Ok(hwnd),
+        }
+    }
 }
 
 fn query_service_provider<T>(service_provider: &IServiceProvider) -> Result<T>
@@ -178,11 +211,15 @@ impl DeskBand {
             .cast::<IOleWindow>()?
             .GetWindow()?;
 
+        let browser_handle = HWND(web_browser.get_HWND()?.0 as _);
+        let travel_toolbar_handle = find_travel_toolbar(browser_handle)?;
+
         let explorer_handle = shell_browser.GetWindow()?;
 
         let tab_bar = tabs::tab_bar::TabBar::new(
             parent_window_handle,
             explorer_handle,
+            travel_toolbar_handle,
             shell_browser.clone(),
         );
         tab_bar.add_tab(get_current_folder_path(&shell_browser), 0)?;

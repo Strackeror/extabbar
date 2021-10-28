@@ -10,6 +10,7 @@ use crate::idl::Idl;
 
 use super::explorer_subclass::ExplorerSubclass;
 use super::tab_control::{pwstr_to_string, TabControl};
+use super::travel_bar_control::TravelBarControl;
 
 pub static mut DLL_INSTANCE: Option<HINSTANCE> = None;
 
@@ -33,6 +34,7 @@ struct TabBar_ {
 
     tab_control: Option<Box<TabControl>>,
     explorer_subclass: Option<Box<ExplorerSubclass>>,
+    travel_toolbar: TravelBarControl,
 
     explorer: IShellBrowser,
 }
@@ -66,11 +68,17 @@ pub fn get_current_folder_path(browser: &IShellBrowser) -> TabPath {
 }
 
 impl TabBar {
-    pub fn new(parent: HWND, explorer_handle: HWND, browser: IShellBrowser) -> Rc<TabBar> {
+    pub fn new(
+        parent: HWND,
+        explorer_handle: HWND,
+        travel_toolbar_handle: HWND,
+        browser: IShellBrowser,
+    ) -> Rc<TabBar> {
         let new = TabBar_ {
             tabs: Default::default(),
             tab_key_counter: 0,
             tab_control: None,
+            travel_toolbar: TravelBarControl::new(travel_toolbar_handle),
             explorer_subclass: None,
             explorer: browser,
         };
@@ -151,8 +159,21 @@ impl TabBar {
             }
             tab.current_path = path.clone();
         }
+
         self.tab_control()
             .set_tab_title(index, get_tab_name(&path))?;
+
+        let can_go_backward = !self.get_tab(index).ok_or(E_FAIL)?.backward_paths.is_empty();
+        let can_go_forward = !self.get_tab(index).ok_or(E_FAIL)?.forward_paths.is_empty();
+        self.0
+            .borrow()
+            .travel_toolbar
+            .set_button_active(256, can_go_backward);
+        self.0
+            .borrow()
+            .travel_toolbar
+            .set_button_active(257, can_go_forward);
+
         Ok(())
     }
 
@@ -184,7 +205,8 @@ impl TabBar {
 
     fn browse_to(&self, path: TabPath) -> Result<()> {
         let browser = self.0.borrow().explorer.clone();
-        unsafe { browser.BrowseObject(path.ok_or(E_FAIL)?.get(), SBSP_SAMEBROWSER) }
+        unsafe { browser.BrowseObject(path.ok_or(E_FAIL)?.get(), SBSP_SAMEBROWSER)? }
+        Ok(())
     }
 
     pub fn switch_to_current_tab(&self) -> Result<()> {
