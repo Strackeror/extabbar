@@ -15,6 +15,7 @@ const TAB_BAR_SUBCLASS_UID: usize = 42;
 pub struct TabControl {
     pub handle: HWND,
     tab_bar: Weak<TabBar>,
+    focused_tab: Option<TabIndex>,
     _pin: std::marker::PhantomPinned,
 }
 
@@ -45,8 +46,8 @@ impl TabControl {
         _uid_subclass: usize,
         ref_data: usize,
     ) -> LRESULT {
-        let obj = ref_data as *const TabControl;
-        let obj = unsafe { obj.as_ref().unwrap() };
+        let obj = ref_data as *mut TabControl;
+        let obj = unsafe { &mut *obj };
         obj.window_procedure(hwnd, message, wparam, lparam)
     }
 
@@ -71,6 +72,7 @@ impl TabControl {
         let new = Box::new(TabControl {
             handle,
             tab_bar,
+            focused_tab: None,
             _pin: Default::default(),
         });
 
@@ -160,6 +162,44 @@ impl TabControl {
         unsafe { Some(SendMessageW(handle, TCM_GETCURSEL, WPARAM(0), LPARAM(0)).0 as usize) }
     }
 
+    pub fn get_focused_tab_index(&self) -> Option<TabIndex> {
+        let handle = self.handle;
+        unsafe { Some(SendMessageW(handle, TCM_GETCURFOCUS, WPARAM(0), LPARAM(0)).0 as usize) }
+    }
+
+    pub fn get_hovered_tab_index(&self) -> Option<TabIndex> {
+        let mut point = POINT::default();
+
+        unsafe {
+            if !GetCursorPos(&mut point as _).as_bool() {
+                return None;
+            }
+        }
+        log::info!("cursor pos: {:?}", point);
+        self.get_tab_at_coords(point.x, point.y)
+    }
+
+    pub fn get_tab_at_coords(&self, x: i32, y: i32) -> Option<TabIndex> {
+        let handle = self.handle;
+        let mut hit_test_info = TCHITTESTINFO {
+            pt: POINT { x, y },
+            ..Default::default()
+        };
+
+        let ret = unsafe {
+            SendMessageW(
+                handle,
+                TCM_HITTEST,
+                WPARAM(0),
+                LPARAM(addr_of_mut!(hit_test_info) as _),
+            )
+        };
+        if ret == LRESULT(-1) {
+            return None;
+        }
+        Some(ret.0 as _)
+    }
+
     pub fn get_tab_key(&self, index: TabIndex) -> Result<TabKey> {
         let mut tab_info = TCITEMW {
             mask: TCIF_PARAM,
@@ -230,6 +270,7 @@ impl TabControl {
     // file under mouse : 0x4d4d4d
     // file selected : 0x777777
     // background : 0x191919
+    const BACKGROUND: u32 = 0x191919;
     const BG_FOCUSED_TAB: u32 = 0x4d4d4d;
     const BG_SELECTED_TAB: u32 = 0x191919;
     const BG_UNFOCUSED_TAB: u32 = 0x202020;
@@ -237,18 +278,19 @@ impl TabControl {
     fn paint(&self, handle: HWND) -> Result<()> {
         unsafe {
             let mut paint_struct: PAINTSTRUCT = Default::default();
-            let mut hdc = BeginPaint(handle, addr_of_mut!(paint_struct));
-
+            let hdc = BeginPaint(handle, addr_of_mut!(paint_struct));
             {
-                let brush = CreateSolidBrush(0x191919);
+                let brush = CreateSolidBrush(Self::BACKGROUND);
                 FillRect(hdc, addr_of!(paint_struct.rcPaint), brush);
                 DeleteObject(brush);
             }
 
-            let edge_pen = CreatePen(PS_SOLID, 1, 0x2b2b2b);
+            let edge_pen = CreatePen(PS_SOLID, 1, Self::BORDER_COLOR);
             let hold_pen = SelectObject(hdc, edge_pen);
 
             let selected_index = self.get_selected_tab_index();
+            let focused_index = self.focused_tab;
+            log::info!("{:?}", (selected_index, focused_index));
 
             let font = CreateFontW(
                 16,
@@ -283,15 +325,17 @@ impl TabControl {
                 };
 
                 let selected = selected_index == Some(index);
+                let focused = focused_index == Some(index);
                 if !selected {
                     tab_rect.top += 2;
                 }
                 {
-                    let brush = CreateSolidBrush(if selected {
-                        Self::BG_SELECTED_TAB
-                    } else {
-                        Self::BG_UNFOCUSED_TAB
-                    });
+                    let color = match (selected, focused) {
+                        (true, false) => Self::BG_SELECTED_TAB,
+                        (false, false) => Self::BG_UNFOCUSED_TAB,
+                        (_, true) => Self::BG_FOCUSED_TAB,
+                    };
+                    let brush = CreateSolidBrush(color);
                     FillRect(hdc, addr_of!(tab_rect), brush);
                     DeleteObject(brush);
                 }
@@ -329,13 +373,14 @@ impl TabControl {
             DeleteObject(edge_pen);
             SelectObject(hdc, hold_font);
             DeleteObject(font);
+            EndPaint(handle, addr_of_mut!(paint_struct));
         }
 
         Ok(())
     }
 
     fn window_procedure(
-        &self,
+        &mut self,
         hwnd: HWND,
         message: u32,
         wparam: WPARAM,
@@ -347,9 +392,32 @@ impl TabControl {
                     let result = self.paint(hwnd);
                     return LRESULT(result.is_ok() as i32);
                 }
-                WM_MBUTTONDOWN => tab_bar.clone_tab(self.get_selected_tab_index().unwrap_or(0)),
-                WM_RBUTTONUP => tab_bar.remove_tab(self.get_selected_tab_index().unwrap_or(0)),
+                WM_MBUTTONDOWN => match self.focused_tab {
+                    Some(index) => {
+                        let _ = tab_bar
+                            .remove_tab(index)
+                            .map_err(|err| log::error!("{:?}", err));
+                        Ok(())
+                    }
+                    None => Ok(()),
+                },
                 WM_LBUTTONUP => tab_bar.switch_to_current_tab(),
+                WM_MOUSEMOVE => unsafe {
+                    let x = (lparam.0 & 0xffff) as i16;
+                    let y = ((lparam.0 >> 16) & 0xffff) as i16;
+                    let focused_tab = self.get_tab_at_coords(x as _, y as _);
+                    if focused_tab != self.focused_tab {
+                        self.focused_tab = focused_tab;
+                        log::info!("repaint");
+                        InvalidateRect(hwnd, std::ptr::null(), BOOL(1));
+                        UpdateWindow(hwnd);
+                    }
+                    Ok(())
+                },
+                WM_MOUSELEAVE => {
+                    self.focused_tab = None;
+                    Ok(())
+                }
                 _ => Ok(()),
             };
 
