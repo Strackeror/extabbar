@@ -133,6 +133,16 @@ impl TabBar {
 
     pub fn remove_tab(&self, index: TabIndex) -> Result<()> {
         let key = self.tab_control().get_tab_key(index)?;
+        if Some(index) == self.tab_control().get_selected_tab_index() {
+            if self.tab_control().get_tab_count() <= 1 {
+                // Don't allow removing last tab
+                return Ok(());
+            } else if index == 0 {
+                self.switch_tab(1)?;
+            } else {
+                self.switch_tab(index - 1)?;
+            }
+        }
         {
             let tabs = &mut self.0.borrow_mut().tabs;
             if tabs.contains_key(&key) {
