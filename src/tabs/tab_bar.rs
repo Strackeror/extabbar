@@ -5,6 +5,7 @@ use std::rc::Rc;
 use windows::runtime::{Interface, Result};
 use windows::Win32::Foundation::*;
 use windows::Win32::UI::Shell::*;
+use windows::Win32::UI::WindowsAndMessaging::{BringWindowToTop, SetForegroundWindow};
 
 use crate::idl::Idl;
 
@@ -37,6 +38,7 @@ struct TabBar_ {
     travel_toolbar: TravelBarControl,
 
     explorer: IShellBrowser,
+    explorer_handle: HWND,
 }
 pub struct TabBar(RefCell<TabBar_>);
 fn get_tab_name(pidl: &TabPath) -> String {
@@ -81,6 +83,7 @@ impl TabBar {
             travel_toolbar: TravelBarControl::new(travel_toolbar_handle),
             explorer_subclass: None,
             explorer: browser,
+            explorer_handle,
         };
         let new = Rc::new(TabBar(RefCell::new(new)));
         let tab_control = TabControl::new(parent, Rc::downgrade(&new));
@@ -240,6 +243,10 @@ impl TabBar {
     pub fn new_window(&self, path: TabPath) -> Result<()> {
         let index = self.tab_control().get_tab_count();
         self.add_tab(path, index)?;
-        self.switch_tab(index)
+        self.switch_tab(index)?;
+        unsafe {
+            SetForegroundWindow(self.0.borrow().explorer_handle);
+        }
+        Ok(())
     }
 }
