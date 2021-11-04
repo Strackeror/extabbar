@@ -7,27 +7,27 @@ mod tabs;
 use std::ffi::c_void;
 use std::rc::{Rc, Weak};
 
-use bindings::Windows::Win32::System::LibraryLoader::DisableThreadLibraryCalls;
-use bindings::Windows::Win32::System::SystemServices::IServiceProvider;
-use bindings::Windows::Win32::System::WindowsProgramming::{
+use tabs::tab_bar::get_current_folder_path;
+use windows::runtime::*;
+use windows::Win32::System::LibraryLoader::DisableThreadLibraryCalls;
+use windows::Win32::System::WindowsProgramming::{
     DWebBrowserEvents2, IWebBrowser2, IWebBrowserApp,
 };
-use bindings::Windows::Win32::UI::WindowsAndMessaging::{
+use windows::Win32::UI::WindowsAndMessaging::{
     DestroyWindow, EnumChildWindows, FindWindowExW, GetClassNameW, ShowWindow, SW_HIDE, SW_SHOW,
 };
-use bindings::*;
-use tabs::tab_bar::get_current_folder_path;
-use windows::*;
 
-use bindings::Windows::Win32::Foundation::*;
-use bindings::Windows::Win32::System::Com::{IConnectionPointContainer, IOleWindow};
-use bindings::Windows::Win32::System::OleAutomation::*;
-use bindings::Windows::Win32::UI::Shell::*;
+use windows::Win32::Foundation::*;
+use windows::Win32::System::Com::{IConnectionPointContainer, IServiceProvider, VARIANT};
+use windows::Win32::System::Ole::Automation::*;
+use windows::Win32::System::Ole::IOleWindow;
+use windows::Win32::UI::Shell::*;
 
 use crate::tabs::tab_bar::DLL_INSTANCE;
+use windows as Windows;
 
 // {9ecce421-925a-4484-b2cf-c00b182bc32a}
-const EXT_TAB_GUID: Guid = Guid::from_values(
+const EXT_TAB_GUID: GUID = GUID::from_values(
     0x9ecce421,
     0x925a,
     0x4484,
@@ -108,7 +108,7 @@ impl BrowserEventHandler {
 
     pub unsafe fn GetIDsOfNames(
         &self,
-        riid: *const Guid,
+        riid: *const GUID,
         rgsznames: *const PWSTR,
         cnames: u32,
         lcid: u32,
@@ -141,7 +141,7 @@ impl BrowserEventHandler {
     pub unsafe fn Invoke(
         &mut self,
         dispidmember: i32,
-        riid: *const Guid,
+        riid: *const GUID,
         lcid: u32,
         wflags: u16,
         pdispparams: *const DISPPARAMS,
@@ -182,7 +182,10 @@ struct DeskBandData {
     tab_bar: Rc<tabs::tab_bar::TabBar>,
 }
 
-#[implement(Windows::Win32::System::Com::{IObjectWithSite},  Windows::Win32::UI::Shell::{IDeskBand})]
+#[implement(
+    Windows::Win32::System::Ole::IObjectWithSite,
+    Windows::Win32::UI::Shell::IDeskBand
+)]
 #[derive(Default)]
 struct DeskBand {
     data: Option<DeskBandData>,
@@ -211,7 +214,7 @@ impl DeskBand {
             .cast::<IOleWindow>()?
             .GetWindow()?;
 
-        let browser_handle = HWND(web_browser.get_HWND()?.0 as _);
+        let browser_handle = HWND(web_browser.HWND()?.0 as _);
         let travel_toolbar_handle = find_travel_toolbar(browser_handle)?;
 
         let explorer_handle = shell_browser.GetWindow()?;
@@ -251,7 +254,7 @@ impl DeskBand {
         Ok(())
     }
 
-    pub unsafe fn GetSite(&self, iid: *const Guid, out: *mut RawPtr) -> HRESULT {
+    pub unsafe fn GetSite(&self, iid: *const GUID, out: *mut RawPtr) -> HRESULT {
         log::info!("Get site");
         if let Some(data) = &self.data {
             return data.p_input_object_site.query(iid, out);
@@ -358,7 +361,7 @@ impl ClassFactory {
     pub fn CreateInstance(
         &self,
         outer: &Option<IUnknown>,
-        iid: *const Guid,
+        iid: *const GUID,
         object: *mut RawPtr,
     ) -> HRESULT {
         if outer.is_some() {
@@ -424,8 +427,8 @@ pub extern "system" fn DllMain(instance: HINSTANCE, dw_reason: u32, _lpv_reserve
 #[no_mangle]
 #[allow(non_snake_case)]
 pub unsafe extern "stdcall" fn DllGetClassObject(
-    rclsid: *const Guid,
-    iid: *const Guid,
+    rclsid: *const GUID,
+    iid: *const GUID,
     object: *mut RawPtr,
 ) -> HRESULT {
     if EXT_TAB_GUID == *rclsid {

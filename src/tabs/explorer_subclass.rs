@@ -1,6 +1,6 @@
 use std::rc::Weak;
 
-use bindings::Windows::Win32::{
+use windows::Win32::{
     Foundation::*,
     UI::{
         Shell::{

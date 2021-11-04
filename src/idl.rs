@@ -1,4 +1,4 @@
-use bindings::Windows::Win32::UI::Shell::{ILClone, ILFree, ILIsEqual, ITEMIDLIST};
+use windows::Win32::UI::Shell::{ILClone, ILFree, ILIsEqual, ITEMIDLIST};
 
 pub struct Idl(*const ITEMIDLIST);
 

@@ -1,11 +1,11 @@
 use std::ptr::{addr_of, addr_of_mut};
 use std::rc::Weak;
 
-use bindings::Windows::Win32::{
+use windows::Win32::{
     Foundation::*, Graphics::Gdi::*, UI::Controls::*, UI::Shell::*, UI::WindowsAndMessaging::*,
 };
 
-use windows::*;
+use windows::runtime::*;
 
 use super::tab_bar::{TabBar, TabIndex, TabKey, DLL_INSTANCE};
 
@@ -390,7 +390,7 @@ impl TabControl {
             let result = match message {
                 WM_PAINT => {
                     let result = self.paint(hwnd);
-                    return LRESULT(result.is_ok() as i32);
+                    return LRESULT(result.is_ok() as _);
                 }
                 WM_MBUTTONDOWN => match self.focused_tab {
                     Some(index) => tab_bar

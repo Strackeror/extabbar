@@ -1,14 +1,10 @@
 use std::ffi::c_void;
 
-use bindings::Windows::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, POINT, S_FALSE, WPARAM},
-    System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
-    UI::{
-        Shell::{IShellBrowser, ITEMIDLIST},
-        WindowsAndMessaging::{RegisterWindowMessageW, SendMessageW},
-    },
-};
-use windows::*;
+use windows::runtime::*;
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, S_FALSE, WPARAM};
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+use windows::Win32::UI::Shell::{IShellBrowser, ITEMIDLIST};
+use windows::Win32::UI::WindowsAndMessaging::{RegisterWindowMessageW, SendMessageW};
 
 use crate::{BROWSE_OBJECT_MESSAGE, SHOW_WINDOW_MESSAGE};
 
@@ -135,7 +131,7 @@ pub unsafe fn hook_show_window(explorer_handle: HWND) {
 
     SHOW_WINDOW_MESSAGE_ID = RegisterWindowMessageW(SHOW_WINDOW_MESSAGE);
 
-    let explorer_factory_server_clsid = Guid::from("93A56381-E0CD-485A-B60E-67819E12F81B");
+    let explorer_factory_server_clsid = GUID::from("93A56381-E0CD-485A-B60E-67819E12F81B");
     let instance: IUnknown = CoCreateInstance(
         std::ptr::addr_of!(explorer_factory_server_clsid),
         None,

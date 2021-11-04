@@ -1,10 +1,8 @@
-use bindings::Windows::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, WPARAM},
-    UI::{
-        Controls::TB_ENABLEBUTTON,
-        Shell::{DefSubclassProc, SetWindowSubclass},
-        WindowsAndMessaging::SendMessageW,
-    },
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::UI::{
+    Controls::TB_ENABLEBUTTON,
+    Shell::{DefSubclassProc, SetWindowSubclass},
+    WindowsAndMessaging::SendMessageW,
 };
 
 pub struct TravelBarControl {

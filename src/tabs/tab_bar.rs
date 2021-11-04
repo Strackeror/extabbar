@@ -2,9 +2,9 @@ use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use bindings::Windows::Win32::Foundation::*;
-use bindings::Windows::Win32::UI::Shell::*;
-use windows::{Interface, Result};
+use windows::runtime::{Interface, Result};
+use windows::Win32::Foundation::*;
+use windows::Win32::UI::Shell::*;
 
 use crate::idl::Idl;
 
