@@ -267,6 +267,27 @@ impl TabControl {
         }
     }
 
+    fn create_popup_menu(&self) -> Result<()> {
+        let menu = unsafe { CreatePopupMenu() };
+        unsafe { AppendMenuW(menu, MF_STRING, 1001, "Toggle Dark Mode") };
+        unsafe {
+            let mut point = POINT::default();
+            GetCursorPos(&mut point as *mut _).ok()?;
+            TrackPopupMenu(
+                menu,
+                TPM_LEFTALIGN | TPM_RIGHTBUTTON,
+                point.x,
+                point.y,
+                0,
+                self.handle,
+                0 as _,
+            );
+            DestroyMenu(menu).ok()?;
+        }
+
+        Ok(())
+    }
+
     // file under mouse : 0x4d4d4d
     // file selected : 0x777777
     // background : 0x191919
@@ -343,14 +364,18 @@ impl TabControl {
                 let edges = [
                     POINT {
                         x: tab_rect.left,
+                        y: tab_rect.bottom,
+                    },
+                    POINT {
+                        x: tab_rect.left,
                         y: tab_rect.top,
                     },
                     POINT {
-                        x: tab_rect.right - 1,
+                        x: tab_rect.right,
                         y: tab_rect.top,
                     },
                     POINT {
-                        x: tab_rect.right - 1,
+                        x: tab_rect.right,
                         y: tab_rect.bottom,
                     },
                 ];
@@ -404,6 +429,7 @@ impl TabControl {
                         .map_err(|err| log::error!("{:?}", err)),
                     None => Ok(()),
                 },
+                WM_RBUTTONDOWN => return LRESULT(self.create_popup_menu().is_ok() as _),
                 WM_MOUSEMOVE => unsafe {
                     let x = (lparam.0 & 0xffff) as i16;
                     let y = ((lparam.0 >> 16) & 0xffff) as i16;
