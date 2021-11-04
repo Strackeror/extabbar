@@ -393,15 +393,17 @@ impl TabControl {
                     return LRESULT(result.is_ok() as i32);
                 }
                 WM_MBUTTONDOWN => match self.focused_tab {
-                    Some(index) => {
-                        let _ = tab_bar
-                            .remove_tab(index)
-                            .map_err(|err| log::error!("{:?}", err));
-                        Ok(())
-                    }
+                    Some(index) => tab_bar
+                        .remove_tab(index)
+                        .map_err(|err| log::error!("{:?}", err)),
                     None => Ok(()),
                 },
-                WM_LBUTTONUP => tab_bar.switch_to_current_tab(),
+                WM_LBUTTONDOWN => match self.focused_tab {
+                    Some(index) => tab_bar
+                        .switch_tab(index)
+                        .map_err(|err| log::error!("{:?}", err)),
+                    None => Ok(()),
+                },
                 WM_MOUSEMOVE => unsafe {
                     let x = (lparam.0 & 0xffff) as i16;
                     let y = ((lparam.0 >> 16) & 0xffff) as i16;
