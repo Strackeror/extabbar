@@ -5,9 +5,10 @@ use std::rc::Rc;
 use windows::runtime::{Interface, Result};
 use windows::Win32::Foundation::*;
 use windows::Win32::UI::Shell::*;
-use windows::Win32::UI::WindowsAndMessaging::{BringWindowToTop, SetForegroundWindow};
+use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
 
 use crate::idl::Idl;
+use crate::settings::Settings;
 
 use super::explorer_subclass::ExplorerSubclass;
 use super::tab_control::{pwstr_to_string, TabControl};
@@ -75,6 +76,7 @@ impl TabBar {
         explorer_handle: HWND,
         travel_toolbar_handle: HWND,
         browser: IShellBrowser,
+        settings: Settings,
     ) -> Rc<TabBar> {
         let new = TabBar_ {
             tabs: Default::default(),
@@ -86,7 +88,7 @@ impl TabBar {
             explorer_handle,
         };
         let new = Rc::new(TabBar(RefCell::new(new)));
-        let tab_control = TabControl::new(parent, Rc::downgrade(&new));
+        let tab_control = TabControl::new(parent, Rc::downgrade(&new), settings.dark_mode);
         new.0.borrow_mut().tab_control = Some(tab_control);
         new.0.borrow_mut().explorer_subclass =
             Some(ExplorerSubclass::new(explorer_handle, Rc::downgrade(&new)));
@@ -225,6 +227,13 @@ impl TabBar {
     pub fn switch_to_current_tab(&self) -> Result<()> {
         let index = self.tab_control().get_selected_tab_index().ok_or(E_FAIL)?;
         self.switch_tab(index)
+    }
+
+    pub fn toggle_dark_mode(&self) {
+        log::info!("toggle dark mode");
+        let mut mut_self = self.0.borrow_mut();
+        let dark_mode_ref: &mut bool = &mut mut_self.tab_control.as_mut().unwrap().dark_mode;
+        *dark_mode_ref = !*dark_mode_ref;
     }
 
     pub fn switch_tab(&self, index: TabIndex) -> Result<()> {

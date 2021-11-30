@@ -2,9 +2,11 @@
 
 mod detour;
 mod idl;
+mod settings;
 mod tabs;
 
 use std::ffi::c_void;
+use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
 use tabs::tab_bar::get_current_folder_path;
@@ -16,6 +18,7 @@ use windows::Win32::System::WindowsProgramming::{
 use windows::Win32::UI::WindowsAndMessaging::{
     DestroyWindow, EnumChildWindows, FindWindowExW, GetClassNameW, ShowWindow, SW_HIDE, SW_SHOW,
 };
+use Windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 
 use windows::Win32::Foundation::*;
 use windows::Win32::System::Com::{IConnectionPointContainer, IServiceProvider, VARIANT};
@@ -23,6 +26,7 @@ use windows::Win32::System::Ole::Automation::*;
 use windows::Win32::System::Ole::IOleWindow;
 use windows::Win32::UI::Shell::*;
 
+use crate::settings::current_settings;
 use crate::tabs::tab_bar::DLL_INSTANCE;
 use windows as Windows;
 
@@ -44,6 +48,15 @@ pub const SHOW_WINDOW_MESSAGE: &str = "extabbar_ShowWindow";
 struct BrowserEventHandler {
     tab_bar: Weak<tabs::tab_bar::TabBar>,
     browser: IShellBrowser,
+}
+
+fn get_dll_path() -> PathBuf {
+    unsafe {
+        let mut output = [0u16; 256];
+        let sz =
+            GetModuleFileNameW(DLL_INSTANCE.unwrap(), PWSTR(output.as_mut_ptr()), 256) as usize;
+        PathBuf::from(String::from_utf16_lossy(&output[..sz]))
+    }
 }
 
 fn find_travel_toolbar(explorer_handle: HWND) -> Result<HWND> {
@@ -219,16 +232,17 @@ impl DeskBand {
 
         let explorer_handle = shell_browser.GetWindow()?;
 
+        let settings = current_settings();
         let tab_bar = tabs::tab_bar::TabBar::new(
             parent_window_handle,
             explorer_handle,
             travel_toolbar_handle,
             shell_browser.clone(),
+            settings,
         );
         tab_bar.add_tab(get_current_folder_path(&shell_browser), 0)?;
 
         log::info!("Connecting to event handler");
-
         let browser_event_handler = BrowserEventHandler {
             tab_bar: Rc::downgrade(&tab_bar),
             browser: shell_browser.clone(),
@@ -397,6 +411,13 @@ impl ClassFactory {
 pub extern "system" fn DllMain(instance: HINSTANCE, dw_reason: u32, _lpv_reserved: RawPtr) -> BOOL {
     if dw_reason == 1 {
         //DLL_PROCESS_ATTACH
+
+        // Make this safe at some point
+        unsafe {
+            DLL_INSTANCE = Some(instance);
+        }
+
+        let current_path = get_dll_path().with_file_name("extabbar.log");
         fern::Dispatch::new()
             .level(log::LevelFilter::Debug)
             .format(|out, message, record| {
@@ -408,17 +429,12 @@ pub extern "system" fn DllMain(instance: HINSTANCE, dw_reason: u32, _lpv_reserve
                     message
                 ))
             })
-            .chain(fern::log_file("D:/Dev/Tabs/output.log").unwrap())
+            .chain(fern::log_file(current_path.clone()).unwrap())
             .apply()
             .unwrap();
-        log::info!("Attached");
+        log::info!("Attached, dll path: {:?}", current_path);
         std::panic::set_hook(Box::new(|info| log::error!("PANIC ! {:?}", info)));
         unsafe { DisableThreadLibraryCalls(instance) };
-
-        // Make this safe at some point
-        unsafe {
-            DLL_INSTANCE = Some(instance);
-        }
     }
     true.into()
 }

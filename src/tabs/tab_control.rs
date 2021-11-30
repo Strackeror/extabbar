@@ -14,6 +14,7 @@ const TAB_BAR_SUBCLASS_UID: usize = 42;
 #[derive(Clone)]
 pub struct TabControl {
     pub handle: HWND,
+    pub dark_mode: bool,
     tab_bar: Weak<TabBar>,
     focused_tab: Option<TabIndex>,
     _pin: std::marker::PhantomPinned,
@@ -51,7 +52,7 @@ impl TabControl {
         obj.window_procedure(hwnd, message, wparam, lparam)
     }
 
-    pub fn new(parent_handle: HWND, tab_bar: Weak<TabBar>) -> Box<TabControl> {
+    pub fn new(parent_handle: HWND, tab_bar: Weak<TabBar>, dark_mode: bool) -> Box<TabControl> {
         let handle = unsafe {
             CreateWindowExW(
                 WINDOW_EX_STYLE(0),
@@ -70,6 +71,7 @@ impl TabControl {
         };
 
         let new = Box::new(TabControl {
+            dark_mode,
             handle,
             tab_bar,
             focused_tab: None,
@@ -413,10 +415,21 @@ impl TabControl {
     ) -> LRESULT {
         if let Some(tab_bar) = self.tab_bar.upgrade() {
             let result = match message {
-                WM_PAINT => {
-                    let result = self.paint(hwnd);
-                    return LRESULT(result.is_ok() as _);
-                }
+                WM_COMMAND => match wparam.0 {
+                    1001 => {
+                        tab_bar.toggle_dark_mode();
+                        unsafe {
+                            InvalidateRect(hwnd, std::ptr::null(), BOOL(1));
+                            UpdateWindow(hwnd);
+                        }
+                        Ok(())
+                    }
+                    _ => Ok(()),
+                },
+                WM_PAINT => match self.dark_mode {
+                    true => return LRESULT(self.paint(hwnd).is_ok() as _),
+                    false => Ok(()),
+                },
                 WM_MBUTTONDOWN => match self.focused_tab {
                     Some(index) => tab_bar
                         .remove_tab(index)
