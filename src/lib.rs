@@ -31,7 +31,7 @@ use crate::tabs::tab_bar::DLL_INSTANCE;
 use windows as Windows;
 
 // {9ecce421-925a-4484-b2cf-c00b182bc32a}
-const EXT_TAB_GUID: GUID = GUID::from_values(
+pub const EXT_TAB_GUID: GUID = GUID::from_values(
     0x9ecce421,
     0x925a,
     0x4484,

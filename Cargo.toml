@@ -13,6 +13,7 @@ fern = "0.6.0"
 log = "0.4.14"
 serde = {version ="1.0.130", features = ["derive"]}
 serde_json = "1.0.72"
+winreg = "0.10.1"
 
 [dependencies.windows]
 version = "0.24"
@@ -34,5 +35,9 @@ features = [
 
 [lib]
 crate-type = ["cdylib"]
+
+[[bin]]
+name = "setup"
+path = "src/setup/setup.rs"
 
 [features]
