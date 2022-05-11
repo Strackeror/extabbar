@@ -1,5 +1,5 @@
 use std::ptr::{addr_of, addr_of_mut};
-use std::rc::Weak;
+use std::rc::{Weak, Rc};
 
 use windows::Win32::{
     Foundation::*, Graphics::Gdi::*, UI::Controls::*, UI::Shell::*, UI::WindowsAndMessaging::*,
@@ -406,6 +406,22 @@ impl TabControl {
         Ok(())
     }
 
+    
+    fn handle_left_click(&mut self, tab_bar: Rc<TabBar>, flags: usize) -> Result<()> {
+        if flags & MK_CONTROL as usize != 0 {
+            match self.focused_tab {
+                Some(index) => tab_bar.clone_tab(index),
+                None => Ok(())
+            }
+        } else {
+            match self.focused_tab {
+                Some(index) => tab_bar
+                    .switch_tab(index),
+                None => Ok(()),
+            }
+        }
+    }
+
     fn window_procedure(
         &mut self,
         hwnd: HWND,
@@ -432,16 +448,10 @@ impl TabControl {
                 },
                 WM_MBUTTONDOWN => match self.focused_tab {
                     Some(index) => tab_bar
-                        .remove_tab(index)
-                        .map_err(|err| log::error!("{:?}", err)),
+                        .remove_tab(index),
                     None => Ok(()),
                 },
-                WM_LBUTTONDOWN => match self.focused_tab {
-                    Some(index) => tab_bar
-                        .switch_tab(index)
-                        .map_err(|err| log::error!("{:?}", err)),
-                    None => Ok(()),
-                },
+                WM_LBUTTONDOWN => self.handle_left_click(tab_bar, wparam.0),
                 WM_RBUTTONDOWN => return LRESULT(self.create_popup_menu().is_ok() as _),
                 WM_MOUSEMOVE => unsafe {
                     let x = (lparam.0 & 0xffff) as i16;
@@ -463,6 +473,7 @@ impl TabControl {
             };
 
             if result.is_err() {
+                log::error!("Error handling event {:?}", result);
                 return LRESULT(0);
             }
         }
