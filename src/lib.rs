@@ -8,21 +8,26 @@ mod tabs;
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
+use std::sync::Mutex;
 
 use tabs::tab_bar::get_current_folder_path;
-use windows::runtime::*;
+use windows::core::{implement, Result, GUID, PCWSTR};
 use windows::Win32::System::LibraryLoader::DisableThreadLibraryCalls;
-use windows::Win32::System::WindowsProgramming::{
-    DWebBrowserEvents2, IWebBrowser2, IWebBrowserApp,
-};
+use windows::Win32::UI::Shell::{DWebBrowserEvents2, IWebBrowser2, IWebBrowserApp};
 use windows::Win32::UI::WindowsAndMessaging::{
     DestroyWindow, EnumChildWindows, FindWindowExW, GetClassNameW, ShowWindow, SW_HIDE, SW_SHOW,
 };
+use Windows::core::{Abi, IUnknown, Interface, RawPtr, HRESULT, PWSTR};
+use Windows::Win32::System::Com::{
+    IClassFactory_Impl, IDispatch_Impl, ITypeInfo, DISPPARAMS, EXCEPINFO,
+};
 use Windows::Win32::System::LibraryLoader::GetModuleFileNameW;
+use Windows::Win32::System::Ole::{
+    IObjectWithSite_Impl, IOleWindow_Impl, DISPATCH_METHOD, VT_BSTR,
+};
 
 use windows::Win32::Foundation::*;
 use windows::Win32::System::Com::{IConnectionPointContainer, IServiceProvider, VARIANT};
-use windows::Win32::System::Ole::Automation::*;
 use windows::Win32::System::Ole::IOleWindow;
 use windows::Win32::UI::Shell::*;
 
@@ -43,18 +48,18 @@ static mut DLL_LOCK: i32 = 0;
 pub const BROWSE_OBJECT_MESSAGE: &str = "extabbar_BrowseObject";
 pub const SHOW_WINDOW_MESSAGE: &str = "extabbar_ShowWindow";
 
-#[implement(Windows::Win32::System::WindowsProgramming::DWebBrowserEvents2)]
 #[derive(Clone)]
-struct BrowserEventHandler {
+struct BrowserEventHandlerContent {
     tab_bar: Weak<tabs::tab_bar::TabBar>,
     browser: IShellBrowser,
 }
+#[implement(DWebBrowserEvents2)]
+struct BrowserEventHandler(std::sync::Mutex<BrowserEventHandlerContent>);
 
 fn get_dll_path() -> PathBuf {
     unsafe {
         let mut output = [0u16; 256];
-        let sz =
-            GetModuleFileNameW(DLL_INSTANCE.unwrap(), PWSTR(output.as_mut_ptr()), 256) as usize;
+        let sz = GetModuleFileNameW(DLL_INSTANCE.unwrap(), &mut output) as usize;
         PathBuf::from(String::from_utf16_lossy(&output[..sz]))
     }
 }
@@ -63,7 +68,7 @@ fn find_travel_toolbar(explorer_handle: HWND) -> Result<HWND> {
     let mut enum_output = HWND(0);
     unsafe extern "system" fn enum_proc(hwnd: HWND, param: LPARAM) -> BOOL {
         let mut wstr = [0u16; 256];
-        let size = GetClassNameW(hwnd, PWSTR(wstr.as_mut_ptr()), 256) as usize;
+        let size = GetClassNameW(hwnd, &mut wstr) as usize;
         let string = String::from_utf16_lossy(&wstr[0..size]);
 
         // let string = match string {
@@ -85,7 +90,7 @@ fn find_travel_toolbar(explorer_handle: HWND) -> Result<HWND> {
             Some(enum_proc),
             LPARAM(&mut enum_output as *mut _ as isize),
         );
-        match FindWindowExW(enum_output, HWND(0), "ToolbarWindow32", PWSTR::default()) {
+        match FindWindowExW(enum_output, HWND(0), "ToolbarWindow32", PCWSTR::default()) {
             HWND(0) => Err(E_FAIL.into()),
             hwnd => Ok(hwnd),
         }
@@ -109,82 +114,89 @@ where
     }
 }
 
-#[allow(non_snake_case, unused_variables)]
-impl BrowserEventHandler {
-    pub unsafe fn GetTypeInfoCount(&self) -> Result<u32> {
+impl IDispatch_Impl for BrowserEventHandler {
+    #[allow(clippy::too_many_arguments)]
+    fn Invoke(
+        &self,
+        dispidmember: i32,
+        _riid: *const GUID,
+        _lcid: u32,
+        wflags: u16,
+        pdispparams: *const DISPPARAMS,
+        pvarresult: *mut VARIANT,
+        _pexcepinfo: *mut EXCEPINFO,
+        _puargerr: *mut u32,
+    ) -> Result<()> {
+        if wflags != DISPATCH_METHOD as u16 {
+            return Err(DISP_E_MEMBERNOTFOUND.into());
+        }
+
+        let params = unsafe { pdispparams.as_ref() };
+        let params = match params {
+            Some(params) => unsafe {
+                std::slice::from_raw_parts(params.rgvarg, params.cArgs as usize)
+            },
+            None => &[],
+        };
+        let mut content = self.0.lock().unwrap();
+        let result = match dispidmember {
+            0xfc => content.navigate_complete(params),
+            0xfb => content.new_window(params),
+            _ => Ok(Default::default()),
+        };
+
+        if let Ok(result) = result {
+            if !pvarresult.is_null() {
+                unsafe {
+                    *pvarresult = result;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn GetTypeInfoCount(&self) -> Result<u32> {
         Ok(0)
     }
 
-    pub unsafe fn GetTypeInfo(&self, itinfo: u32, lcid: u32) -> Result<ITypeInfo> {
+    fn GetTypeInfo(&self, _itinfo: u32, _lcid: u32) -> Result<ITypeInfo> {
         Err(E_NOTIMPL.into())
     }
 
-    pub unsafe fn GetIDsOfNames(
+    fn GetIDsOfNames(
         &self,
-        riid: *const GUID,
+        _riid: *const GUID,
         rgsznames: *const PWSTR,
-        cnames: u32,
+        _cnames: u32,
         lcid: u32,
-        rgdispid: *mut i32,
+        _rgdispid: *mut i32,
     ) -> Result<()> {
-        log::info!("rgsznames:{:?} lcid:{:?}", *rgsznames, lcid);
+        log::info!("rgsznames:{:?} lcid:{:?}", unsafe{*rgsznames}, lcid);
         Err(DISP_E_UNKNOWNNAME.into())
     }
+}
 
-    fn NavigateComplete(&self, params: &[VARIANT]) -> Result<VARIANT> {
+impl DWebBrowserEvents2_Impl for BrowserEventHandler {}
+
+impl BrowserEventHandlerContent {
+    fn navigate_complete(&self, _params: &[VARIANT]) -> Result<VARIANT> {
         let path = get_current_folder_path(&self.browser);
         self.tab_bar.upgrade().unwrap().navigated(path)?;
 
         Ok(Default::default())
     }
 
-    unsafe fn NewWindow(&mut self, params: &[VARIANT]) -> Result<VARIANT> {
+    fn new_window(&mut self, params: &[VARIANT]) -> Result<VARIANT> {
         log::info!("New window detected!");
-        if params[0].Anonymous.Anonymous.vt != VT_BSTR.0 as u16 {
+        if unsafe { params[0].Anonymous.Anonymous.vt } != VT_BSTR.0 as u16 {
             return Err(E_FAIL.into());
         }
 
-        let url = params[0].Anonymous.Anonymous.Anonymous.bstrVal.to_string();
+        let url = unsafe { params[0].Anonymous.Anonymous.Anonymous.bstrVal.to_string() };
         log::info!("New window url: {:?}", url);
         //self.tab_bar.new_window(url)?;
         Ok(Default::default())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub unsafe fn Invoke(
-        &mut self,
-        dispidmember: i32,
-        riid: *const GUID,
-        lcid: u32,
-        wflags: u16,
-        pdispparams: *const DISPPARAMS,
-        pvarresult: *mut VARIANT,
-        pexcepinfo: *mut EXCEPINFO,
-        puargerr: *mut u32,
-    ) -> Result<()> {
-        if wflags != DISPATCH_METHOD as u16 {
-            return Err(DISP_E_MEMBERNOTFOUND.into());
-        }
-
-        let params = pdispparams.as_ref();
-        let params = match params {
-            Some(params) => std::slice::from_raw_parts(params.rgvarg, params.cArgs as usize),
-            None => &[],
-        };
-
-        let result = match dispidmember {
-            0xfc => self.NavigateComplete(params),
-            0xfb => self.NewWindow(params),
-            _ => Ok(Default::default()),
-        };
-
-        if let Ok(result) = result {
-            if !pvarresult.is_null() {
-                *pvarresult = result;
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -201,120 +213,53 @@ struct DeskBandData {
 )]
 #[derive(Default)]
 struct DeskBand {
-    data: Option<DeskBandData>,
+    data: Mutex<Option<DeskBandData>>,
 }
-
-#[allow(non_snake_case)]
-impl DeskBand {
-    // IObjectWithSite
-    pub unsafe fn SetSite(&mut self, unknown_site: &Option<IUnknown>) -> Result<()> {
-        log::info!("Set Site, data active:{:?}", self.data.is_some());
-        self.data = None;
-
-        log::info!("Getting object site");
-        let input_object_site: IInputObjectSite = unknown_site.as_ref().ok_or(E_FAIL)?.cast()?;
-
-        log::info!("Acquiring services");
-        let service_provider: IServiceProvider = input_object_site.cast()?;
-        let web_browser =
-            query_service_provider::<IWebBrowserApp>(&service_provider)?.cast::<IWebBrowser2>()?;
-        let shell_browser = query_service_provider::<IShellBrowser>(&service_provider)?;
-
-        log::info!("Creating tab bar");
-        let parent_window_handle = unknown_site
-            .as_ref()
-            .ok_or(E_FAIL)?
-            .cast::<IOleWindow>()?
-            .GetWindow()?;
-
-        let browser_handle = HWND(web_browser.HWND()?.0 as _);
-        let travel_toolbar_handle = find_travel_toolbar(browser_handle)?;
-
-        let explorer_handle = shell_browser.GetWindow()?;
-
-        let settings = current_settings();
-        let tab_bar = tabs::tab_bar::TabBar::new(
-            parent_window_handle,
-            explorer_handle,
-            travel_toolbar_handle,
-            shell_browser.clone(),
-            settings,
-        );
-        tab_bar.add_tab(get_current_folder_path(&shell_browser), 0)?;
-
-        log::info!("Connecting to event handler");
-        let browser_event_handler = BrowserEventHandler {
-            tab_bar: Rc::downgrade(&tab_bar),
-            browser: shell_browser.clone(),
-        };
-        let container = web_browser.cast::<IConnectionPointContainer>()?;
-
-        let iid = DWebBrowserEvents2::IID;
-        let point = container.FindConnectionPoint(std::ptr::addr_of!(iid))?;
-
-        point
-            .Advise(IUnknown::from(browser_event_handler))
-            .expect("advise failed");
-
-        self.data = Some(DeskBandData {
-            tab_bar,
-            p_input_object_site: Rc::new(input_object_site),
-        });
-
-        detour::hook_browse_object(shell_browser);
-        detour::hook_show_window(explorer_handle);
-
-        log::info!("Set Site Ok");
-        Ok(())
-    }
-
-    pub unsafe fn GetSite(&self, iid: *const GUID, out: *mut RawPtr) -> HRESULT {
-        log::info!("Get site");
-        if let Some(data) = &self.data {
-            return data.p_input_object_site.query(iid, out);
-        }
-        E_FAIL
-    }
-
-    // IDeskBand
-    pub unsafe fn GetWindow(&self) -> Result<HWND> {
+impl IOleWindow_Impl for DeskBand {
+    fn GetWindow(&self) -> Result<HWND> {
         log::info!("Get window");
-        if let Some(data) = &self.data {
+        if let Some(data) = &*self.data.lock().unwrap() {
             return Ok(data.tab_bar.get_handle());
         }
         Err(E_FAIL.into())
     }
 
-    pub unsafe fn ContextSensitiveHelp(&self, _: BOOL) -> Result<()> {
+    fn ContextSensitiveHelp(&self, _: BOOL) -> Result<()> {
         Err(E_NOTIMPL.into())
     }
+}
 
-    pub unsafe fn ShowDW(&self, _show: BOOL) -> Result<()> {
+impl IDockingWindow_Impl for DeskBand {
+    fn ShowDW(&self, _show: BOOL) -> Result<()> {
         log::info!("ShowDW {:?}", _show);
-        if let Some(data) = &self.data {
-            ShowWindow(
-                data.tab_bar.get_handle(),
-                match _show.0 {
-                    0 => SW_HIDE,
-                    _ => SW_SHOW,
-                },
-            );
+        if let Some(data) = &*self.data.lock().unwrap() {
+            unsafe {
+                ShowWindow(
+                    data.tab_bar.get_handle(),
+                    match _show.0 {
+                        0 => SW_HIDE,
+                        _ => SW_SHOW,
+                    },
+                );
+            }
         }
         Ok(())
     }
 
-    pub unsafe fn CloseDW(&mut self, _reserved: u32) -> Result<()> {
+    fn CloseDW(&self, _reserved: u32) -> Result<()> {
         log::info!("CloseDW");
-        if let Some(data) = &self.data {
+        if let Some(data) = &*self.data.lock().unwrap() {
             let handle = data.tab_bar.get_handle();
-            ShowWindow(handle, SW_HIDE);
-            DestroyWindow(handle);
+            unsafe {
+                ShowWindow(handle, SW_HIDE);
+                DestroyWindow(handle);
+            }
         }
-        self.data = None;
+        *self.data.lock().unwrap() = None;
         Ok(())
     }
 
-    pub unsafe fn ResizeBorderDW(
+    fn ResizeBorderDW(
         &self,
         _prc_border: *const RECT,
         _unknown_toolbar_site: &Option<IUnknown>,
@@ -323,8 +268,10 @@ impl DeskBand {
         log::info!("ResizeBorderDW");
         Err(E_NOTIMPL.into())
     }
+}
 
-    pub unsafe fn GetBandInfo(
+impl IDeskBand_Impl for DeskBand {
+    fn GetBandInfo(
         &self,
         _band_id: u32,
         _view_mode: u32,
@@ -337,7 +284,7 @@ impl DeskBand {
 
         log::info!("get band info id:{}, view mode:{}", _band_id, _view_mode);
 
-        let desk_band_info = desk_band_info_ptr.as_mut().ok_or(E_INVALIDARG)?;
+        let desk_band_info = unsafe { desk_band_info_ptr.as_mut() }.ok_or(E_INVALIDARG)?;
         if desk_band_info.dwMask & DBIM_MINSIZE != 0 {
             desk_band_info.ptMinSize.x = 200;
             desk_band_info.ptMinSize.y = 25;
@@ -367,19 +314,100 @@ impl DeskBand {
     }
 }
 
+impl IObjectWithSite_Impl for DeskBand {
+    fn SetSite(&self, unknown_site: &Option<IUnknown>) -> Result<()> {
+        log::info!("Set Site, data active:{:?}", self.data.lock().unwrap().is_some());
+        *self.data.lock().unwrap() = None;
+
+        log::info!("Getting object site");
+        let input_object_site: IInputObjectSite = unknown_site.as_ref().ok_or(E_FAIL)?.cast()?;
+
+        log::info!("Acquiring services");
+        let service_provider: IServiceProvider = input_object_site.cast()?;
+        let web_browser =
+            query_service_provider::<IWebBrowserApp>(&service_provider)?.cast::<IWebBrowser2>()?;
+        let shell_browser = query_service_provider::<IShellBrowser>(&service_provider)?;
+
+        log::info!("Creating tab bar");
+        let parent_window_handle = unsafe {
+            unknown_site
+                .as_ref()
+                .ok_or(E_FAIL)?
+                .cast::<IOleWindow>()?
+                .GetWindow()?
+        };
+
+        let browser_handle = unsafe { HWND(web_browser.HWND()?.0 as _) };
+        let travel_toolbar_handle = find_travel_toolbar(browser_handle)?;
+
+        let explorer_handle = unsafe { shell_browser.GetWindow()? };
+
+        let settings = current_settings();
+        let tab_bar = tabs::tab_bar::TabBar::new(
+            parent_window_handle,
+            explorer_handle,
+            travel_toolbar_handle,
+            shell_browser.clone(),
+            settings,
+        );
+        tab_bar.add_tab(get_current_folder_path(&shell_browser), 0)?;
+
+        log::info!("Connecting to event handler");
+        let browser_event_handler = BrowserEventHandler(Mutex::new(BrowserEventHandlerContent {
+            tab_bar: Rc::downgrade(&tab_bar),
+            browser: shell_browser.clone(),
+        }));
+        let container = web_browser.cast::<IConnectionPointContainer>()?;
+
+        let iid = DWebBrowserEvents2::IID;
+        let point = unsafe { container.FindConnectionPoint(std::ptr::addr_of!(iid))? };
+
+        unsafe {
+            point
+                .Advise(IUnknown::from(browser_event_handler))
+                .expect("advise failed");
+        }
+
+        *self.data.lock().unwrap() = Some(DeskBandData {
+            tab_bar,
+            p_input_object_site: Rc::new(input_object_site),
+        });
+
+        unsafe {
+            detour::hook_browse_object(shell_browser);
+            detour::hook_show_window(explorer_handle);
+        }
+
+        log::info!("Set Site Ok");
+        Ok(())
+    }
+
+    fn GetSite(&self, iid: *const GUID, out: *mut RawPtr) -> Result<()> {
+        log::info!("Get site");
+        
+        match &*self.data.lock().unwrap() {
+            Some(data) => unsafe {data.p_input_object_site.query(&*iid, out)},
+            None => E_FAIL
+        }.ok()
+    }
+}
+
+#[allow(non_snake_case)]
+impl DeskBand {}
+
 #[implement(Windows::Win32::System::Com::IClassFactory)]
 struct ClassFactory {}
 
 #[allow(non_snake_case)]
-impl ClassFactory {
-    pub fn CreateInstance(
+impl IClassFactory_Impl for ClassFactory {
+    fn CreateInstance(
         &self,
         outer: &Option<IUnknown>,
         iid: *const GUID,
         object: *mut RawPtr,
-    ) -> HRESULT {
+    ) -> Result<()> {
         if outer.is_some() {
-            return CLASS_E_NOAGGREGATION;
+            return CLASS_E_NOAGGREGATION.ok();
         }
 
         unsafe {
@@ -391,15 +419,17 @@ impl ClassFactory {
                 ..Default::default()
             }
             .into();
-            deskband_unknown.query(iid, object)
+            deskband_unknown.query(&*iid, object).ok()
         }
     }
 
-    pub unsafe fn LockServer(&self, _flock: BOOL) -> Result<()> {
-        if _flock.as_bool() {
-            DLL_LOCK += 1;
-        } else {
-            DLL_LOCK -= 1;
+    fn LockServer(&self, _flock: BOOL) -> Result<()> {
+        unsafe {
+            if _flock.as_bool() {
+                DLL_LOCK += 1;
+            } else {
+                DLL_LOCK -= 1;
+            }
         }
         Ok(())
     }
@@ -422,8 +452,8 @@ pub extern "system" fn DllMain(instance: HINSTANCE, dw_reason: u32, _lpv_reserve
             .level(log::LevelFilter::Debug)
             .format(|out, message, record| {
                 out.finish(format_args!(
-                    "{}[{}][{}] {}",
-                    chrono::Local::now().format("[%Y-%m-%d][%H:%M:%S]"),
+                    "{}[{:40}][{:5}] {}",
+                    chrono::Local::now().format("[%Y-%m-%d-%H:%M:%S]"),
                     record.target(),
                     record.level(),
                     message
@@ -450,7 +480,7 @@ pub unsafe extern "stdcall" fn DllGetClassObject(
     if EXT_TAB_GUID == *rclsid {
         log::info!("Dll Got ClassObject");
         let unknown: IUnknown = ClassFactory {}.into();
-        return unknown.query(iid, object);
+        return unknown.query(&*iid, object);
     }
     CLASS_E_CLASSNOTAVAILABLE
 }

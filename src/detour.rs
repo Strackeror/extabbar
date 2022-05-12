@@ -1,10 +1,11 @@
 use std::ffi::c_void;
 
-use windows::runtime::*;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, S_FALSE, WPARAM};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
-use windows::Win32::UI::Shell::{IShellBrowser, ITEMIDLIST};
+use windows::Win32::UI::Shell::IShellBrowser;
+use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::WindowsAndMessaging::{RegisterWindowMessageW, SendMessageW};
+use windows::core::{HRESULT, IUnknown, GUID, Interface};
 
 use crate::{BROWSE_OBJECT_MESSAGE, SHOW_WINDOW_MESSAGE};
 
@@ -47,7 +48,7 @@ pub unsafe fn hook_browse_object(browser: IShellBrowser) {
     log::info!("hook browse object {:?}", MESSAGE_ID_BROWSE_OBJECT);
 
     DETOUR_BROWSE_OBJECT =
-        detour::RawDetour::new(browser.vtable().11 as _, browse_object_detour as _)
+        detour::RawDetour::new(browser.vtable().BrowseObject as _, browse_object_detour as _)
             .map_err(|op| {
                 log::error!("error hook:{:?}", &op);
                 op

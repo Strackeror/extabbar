@@ -1,0 +1,5 @@
+- Drag and Drop to tab
+- Multiple instance handling :
+    - Don't load tab-bar on secondary windows
+    - Actually hook new windows correctly
+- Save tab setup on close

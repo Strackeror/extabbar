@@ -5,7 +5,7 @@ use windows::Win32::{
     Foundation::*, Graphics::Gdi::*, UI::Controls::*, UI::Shell::*, UI::WindowsAndMessaging::*,
 };
 
-use windows::runtime::*;
+use windows::core::*;
 
 use super::tab_bar::{TabBar, TabIndex, TabKey, DLL_INSTANCE};
 
@@ -164,12 +164,12 @@ impl TabControl {
         unsafe { Some(SendMessageW(handle, TCM_GETCURSEL, WPARAM(0), LPARAM(0)).0 as usize) }
     }
 
-    pub fn get_focused_tab_index(&self) -> Option<TabIndex> {
+    pub fn _get_focused_tab_index(&self) -> Option<TabIndex> {
         let handle = self.handle;
         unsafe { Some(SendMessageW(handle, TCM_GETCURFOCUS, WPARAM(0), LPARAM(0)).0 as usize) }
     }
 
-    pub fn get_hovered_tab_index(&self) -> Option<TabIndex> {
+    pub fn _get_hovered_tab_index(&self) -> Option<TabIndex> {
         let mut point = POINT::default();
 
         unsafe {
@@ -270,7 +270,7 @@ impl TabControl {
     }
 
     fn create_popup_menu(&self) -> Result<()> {
-        let menu = unsafe { CreatePopupMenu() };
+        let menu = unsafe { CreatePopupMenu()? };
         unsafe { AppendMenuW(menu, MF_STRING, 1001, "Toggle Dark Mode") };
         unsafe {
             let mut point = POINT::default();
@@ -313,7 +313,6 @@ impl TabControl {
 
             let selected_index = self.get_selected_tab_index();
             let focused_index = self.focused_tab;
-            log::info!("{:?}", (selected_index, focused_index));
 
             let font = CreateFontW(
                 16,
@@ -382,16 +381,16 @@ impl TabControl {
                     },
                 ];
 
-                Polyline(hdc, edges.as_ptr(), edges.len() as i32);
+                Polyline(hdc, &edges);
 
                 let mut text_rect = tab_rect;
                 text_rect.top += 2;
                 SetBkMode(hdc, TRANSPARENT);
                 SetTextColor(hdc, 0xffffff);
+                let u16_tab_text: Vec<u16> = self.get_tab_text(index).unwrap_or_default().encode_utf16().collect();
                 DrawTextW(
                     hdc,
-                    self.get_tab_text(index).unwrap_or_default(),
-                    -1,
+                    &u16_tab_text,
                     addr_of_mut!(text_rect),
                     DT_CENTER,
                 );

@@ -1,9 +1,9 @@
-use std::io::Read;
 
 use winreg::{
-    enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE},
+    enums::{HKEY_LOCAL_MACHINE},
     RegKey,
 };
+
 
 // {9ecce421-925a-4484-b2cf-c00b182bc32a}
 const EXT_TAB_GUID: &str = "{9ecce421-925a-4484-b2cf-c00b182bc32a}";
@@ -12,7 +12,7 @@ fn main() -> std::io::Result<()> {
 
     println!("Install/Uninstall ? (i/u)");
     let mut input = String::new();
-    let sz = std::io::stdin().read_line(&mut input).unwrap();
+    std::io::stdin().read_line(&mut input).unwrap();
 
     let uninstall = match input.trim() {
         "u" => true,

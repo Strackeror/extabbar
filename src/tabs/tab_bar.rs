@@ -2,7 +2,7 @@ use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use windows::runtime::{Interface, Result};
+use windows::core::{Interface, Result};
 use windows::Win32::Foundation::*;
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
@@ -160,11 +160,7 @@ impl TabBar {
 
     pub fn navigated(&self, path: TabPath) -> Result<()> {
         let index = self.tab_control().get_selected_tab_index().ok_or(E_FAIL)?;
-        log::info!(
-            "tab {:?}, navigated to {:?}",
-            index,
-            path.as_ref().map(|n| n.get())
-        );
+        log::info!("tab {:?}, navigated to {:?}", index, get_tab_name(&path));
         {
             let mut tab = self.get_tab(index).ok_or(E_FAIL)?;
             let current_path = tab.current_path.clone();
@@ -224,7 +220,7 @@ impl TabBar {
         Ok(())
     }
 
-    pub fn switch_to_current_tab(&self) -> Result<()> {
+    pub fn _switch_to_current_tab(&self) -> Result<()> {
         let index = self.tab_control().get_selected_tab_index().ok_or(E_FAIL)?;
         self.switch_tab(index)
     }
