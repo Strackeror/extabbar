@@ -40,6 +40,7 @@ struct TabBar_ {
 
     explorer: IShellBrowser,
     explorer_handle: HWND,
+    is_main: bool,
 }
 pub struct TabBar(RefCell<TabBar_>);
 fn get_tab_name(pidl: &TabPath) -> String {
@@ -77,6 +78,7 @@ impl TabBar {
         travel_toolbar_handle: HWND,
         browser: IShellBrowser,
         settings: Settings,
+        is_main: bool,
     ) -> Rc<TabBar> {
         let new = TabBar_ {
             tabs: Default::default(),
@@ -86,6 +88,7 @@ impl TabBar {
             explorer_subclass: None,
             explorer: browser,
             explorer_handle,
+            is_main,
         };
         let new = Rc::new(TabBar(RefCell::new(new)));
         let tab_control = TabControl::new(parent, Rc::downgrade(&new), settings.dark_mode);
@@ -95,6 +98,13 @@ impl TabBar {
         new
     }
 
+    pub fn is_main(&self) -> bool {
+        self.0.borrow().is_main
+    }
+
+    pub fn get_handle(&self) -> HWND {
+        self.tab_control().handle
+    }
     fn tab_control(&self) -> Box<TabControl> {
         return self.0.borrow().tab_control.as_ref().unwrap().clone();
     }
@@ -108,10 +118,6 @@ impl TabBar {
         } else {
             None
         }
-    }
-
-    pub fn get_handle(&self) -> HWND {
-        self.tab_control().handle
     }
 
     fn add_tab_entry(&self, path: TabPath) -> TabKey {

@@ -1,11 +1,11 @@
 use std::ffi::c_void;
 
+use windows::core::{IUnknown, Interface, GUID, HRESULT};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, S_FALSE, WPARAM};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
-use windows::Win32::UI::Shell::IShellBrowser;
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
+use windows::Win32::UI::Shell::IShellBrowser;
 use windows::Win32::UI::WindowsAndMessaging::{RegisterWindowMessageW, SendMessageW};
-use windows::core::{HRESULT, IUnknown, GUID, Interface};
 
 use crate::{BROWSE_OBJECT_MESSAGE, SHOW_WINDOW_MESSAGE};
 
@@ -47,13 +47,15 @@ pub unsafe fn hook_browse_object(browser: IShellBrowser) {
     MESSAGE_ID_BROWSE_OBJECT = RegisterWindowMessageW(BROWSE_OBJECT_MESSAGE);
     log::info!("hook browse object {:?}", MESSAGE_ID_BROWSE_OBJECT);
 
-    DETOUR_BROWSE_OBJECT =
-        detour::RawDetour::new(browser.vtable().BrowseObject as _, browse_object_detour as _)
-            .map_err(|op| {
-                log::error!("error hook:{:?}", &op);
-                op
-            })
-            .ok();
+    DETOUR_BROWSE_OBJECT = detour::RawDetour::new(
+        browser.vtable().BrowseObject as _,
+        browse_object_detour as _,
+    )
+    .map_err(|op| {
+        log::error!("error hook:{:?}", &op);
+        op
+    })
+    .ok();
     DETOUR_BROWSE_OBJECT
         .as_ref()
         .unwrap()
@@ -123,8 +125,7 @@ unsafe extern "system" fn show_window_detour(
 // From QTTabBar
 //MIDL_INTERFACE("489E9453-869B-4BCC-A1C7-48B5285FD9D8") ICommonExplorerHost  : public IUnknown {};
 //MIDL_INTERFACE("93A56381-E0CD-485A-B60E-67819E12F81B") CExplorerFactoryServer {};
-pub unsafe fn hook_show_window(explorer_handle: HWND) {
-    SHOW_WINDOW_EXPLORER_HANDLE = Some(explorer_handle);
+pub unsafe fn hook_show_window() {
     if DETOUR_SHOW_WINDOW.is_some() {
         DETOUR_SHOW_WINDOW.as_ref().unwrap().enable().unwrap();
         return;
@@ -152,4 +153,10 @@ pub unsafe fn hook_show_window(explorer_handle: HWND) {
         .unwrap()
         .enable()
         .expect("failed to enable hook")
+}
+
+pub fn set_main_explorer(explorer_handle: HWND) {
+    unsafe {
+        SHOW_WINDOW_EXPLORER_HANDLE = Some(explorer_handle);
+    }
 }

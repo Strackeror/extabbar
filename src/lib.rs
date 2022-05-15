@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::sync::Mutex;
 
+use once_cell::sync::Lazy;
 use tabs::tab_bar::get_current_folder_path;
 use windows::core::{implement, Result, GUID, PCWSTR};
 use windows::Win32::System::LibraryLoader::DisableThreadLibraryCalls;
@@ -44,6 +45,7 @@ pub const EXT_TAB_GUID: GUID = GUID::from_values(
 );
 
 static mut DLL_LOCK: i32 = 0;
+static MAIN_BAR_OPEN: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 pub const BROWSE_OBJECT_MESSAGE: &str = "extabbar_BrowseObject";
 pub const SHOW_WINDOW_MESSAGE: &str = "extabbar_ShowWindow";
@@ -172,7 +174,7 @@ impl IDispatch_Impl for BrowserEventHandler {
         lcid: u32,
         _rgdispid: *mut i32,
     ) -> Result<()> {
-        log::info!("rgsznames:{:?} lcid:{:?}", unsafe{*rgsznames}, lcid);
+        log::info!("rgsznames:{:?} lcid:{:?}", unsafe { *rgsznames }, lcid);
         Err(DISP_E_UNKNOWNNAME.into())
     }
 }
@@ -250,6 +252,9 @@ impl IDockingWindow_Impl for DeskBand {
         log::info!("CloseDW");
         if let Some(data) = &*self.data.lock().unwrap() {
             let handle = data.tab_bar.get_handle();
+            if data.tab_bar.is_main() {
+                *MAIN_BAR_OPEN.lock().unwrap() = false;
+            }
             unsafe {
                 ShowWindow(handle, SW_HIDE);
                 DestroyWindow(handle);
@@ -279,7 +284,7 @@ impl IDeskBand_Impl for DeskBand {
     ) -> Result<()> {
         log::info!("GetBandInfo");
         if desk_band_info_ptr.is_null() {
-            return Err(E_INVALIDARG.into());
+            return E_INVALIDARG.ok();
         }
 
         log::info!("get band info id:{}, view mode:{}", _band_id, _view_mode);
@@ -316,7 +321,10 @@ impl IDeskBand_Impl for DeskBand {
 
 impl IObjectWithSite_Impl for DeskBand {
     fn SetSite(&self, unknown_site: &Option<IUnknown>) -> Result<()> {
-        log::info!("Set Site, data active:{:?}", self.data.lock().unwrap().is_some());
+        log::info!(
+            "Set Site, data active:{:?}",
+            self.data.lock().unwrap().is_some()
+        );
         *self.data.lock().unwrap() = None;
 
         log::info!("Getting object site");
@@ -343,13 +351,23 @@ impl IObjectWithSite_Impl for DeskBand {
         let explorer_handle = unsafe { shell_browser.GetWindow()? };
 
         let settings = current_settings();
+        let mut is_main = false;
+        {
+            let mut bar_open = MAIN_BAR_OPEN.lock().unwrap();
+            if !*bar_open {
+                *bar_open = true;
+                is_main = true;
+            }
+        }
         let tab_bar = tabs::tab_bar::TabBar::new(
             parent_window_handle,
             explorer_handle,
             travel_toolbar_handle,
             shell_browser.clone(),
             settings,
+            is_main,
         );
+
         tab_bar.add_tab(get_current_folder_path(&shell_browser), 0)?;
 
         log::info!("Connecting to event handler");
@@ -375,7 +393,10 @@ impl IObjectWithSite_Impl for DeskBand {
 
         unsafe {
             detour::hook_browse_object(shell_browser);
-            detour::hook_show_window(explorer_handle);
+            detour::hook_show_window();
+            if is_main {
+                detour::set_main_explorer(explorer_handle);
+            }
         }
 
         log::info!("Set Site Ok");
@@ -384,11 +405,12 @@ impl IObjectWithSite_Impl for DeskBand {
 
     fn GetSite(&self, iid: *const GUID, out: *mut RawPtr) -> Result<()> {
         log::info!("Get site");
-        
+
         match &*self.data.lock().unwrap() {
-            Some(data) => unsafe {data.p_input_object_site.query(&*iid, out)},
-            None => E_FAIL
-        }.ok()
+            Some(data) => unsafe { data.p_input_object_site.query(&*iid, out) },
+            None => E_FAIL,
+        }
+        .ok()
     }
 }
 
