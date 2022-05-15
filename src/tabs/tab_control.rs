@@ -1,5 +1,5 @@
 use std::ptr::{addr_of, addr_of_mut};
-use std::rc::{Weak, Rc};
+use std::rc::{Rc, Weak};
 
 use windows::Win32::{
     Foundation::*, Graphics::Gdi::*, UI::Controls::*, UI::Shell::*, UI::WindowsAndMessaging::*,
@@ -12,11 +12,22 @@ use super::tab_bar::{TabBar, TabIndex, TabKey, DLL_INSTANCE};
 const TAB_BAR_SUBCLASS_UID: usize = 42;
 
 #[derive(Clone)]
+struct FontHolder(HFONT);
+
+impl Drop for FontHolder {
+    fn drop(&mut self) {
+        log::info!("Font dropped");
+        unsafe { DeleteObject(self.0) };
+    }
+}
+
+#[derive(Clone)]
 pub struct TabControl {
     pub handle: HWND,
     pub dark_mode: bool,
     tab_bar: Weak<TabBar>,
     focused_tab: Option<TabIndex>,
+    font: Rc<FontHolder>,
     _pin: std::marker::PhantomPinned,
 }
 
@@ -69,14 +80,34 @@ impl TabControl {
                 std::ptr::null(),
             )
         };
+        let font = unsafe {
+            CreateFontW(
+                16,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS,
+                CLIP_DEFAULT_PRECIS,
+                DEFAULT_QUALITY,
+                FF_DONTCARE,
+                "Segoe UI",
+            )
+        };
 
         let new = Box::new(TabControl {
             dark_mode,
             handle,
             tab_bar,
             focused_tab: None,
+            font: Rc::new(FontHolder(font)),
             _pin: Default::default(),
         });
+        unsafe { SendMessageW(handle, WM_SETFONT, WPARAM(font.0 as _), LPARAM(true as _)) };
 
         unsafe {
             SetWindowSubclass(
@@ -314,23 +345,7 @@ impl TabControl {
             let selected_index = self.get_selected_tab_index();
             let focused_index = self.focused_tab;
 
-            let font = CreateFontW(
-                16,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                DEFAULT_CHARSET,
-                OUT_DEFAULT_PRECIS,
-                CLIP_DEFAULT_PRECIS,
-                DEFAULT_QUALITY,
-                FF_DONTCARE,
-                "Segoe UI",
-            );
-            let hold_font = SelectObject(hdc, font);
+            let hold_font = SelectObject(hdc, (*self.font).0);
 
             for index in 0..self.get_tab_count() {
                 let mut tab_rect = self.get_tab_rect(index)?;
@@ -387,35 +402,31 @@ impl TabControl {
                 text_rect.top += 2;
                 SetBkMode(hdc, TRANSPARENT);
                 SetTextColor(hdc, 0xffffff);
-                let u16_tab_text: Vec<u16> = self.get_tab_text(index).unwrap_or_default().encode_utf16().collect();
-                DrawTextW(
-                    hdc,
-                    &u16_tab_text,
-                    addr_of_mut!(text_rect),
-                    DT_CENTER,
-                );
+                let u16_tab_text: Vec<u16> = self
+                    .get_tab_text(index)
+                    .unwrap_or_default()
+                    .encode_utf16()
+                    .collect();
+                DrawTextW(hdc, &u16_tab_text, addr_of_mut!(text_rect), DT_CENTER);
             }
             SelectObject(hdc, hold_pen);
             DeleteObject(edge_pen);
             SelectObject(hdc, hold_font);
-            DeleteObject(font);
             EndPaint(handle, addr_of_mut!(paint_struct));
         }
 
         Ok(())
     }
 
-    
     fn handle_left_click(&mut self, tab_bar: Rc<TabBar>, flags: usize) -> Result<()> {
         if flags & MK_CONTROL as usize != 0 {
             match self.focused_tab {
                 Some(index) => tab_bar.clone_tab(index),
-                None => Ok(())
+                None => Ok(()),
             }
         } else {
             match self.focused_tab {
-                Some(index) => tab_bar
-                    .switch_tab(index),
+                Some(index) => tab_bar.switch_tab(index),
                 None => Ok(()),
             }
         }
@@ -446,8 +457,7 @@ impl TabControl {
                     false => Ok(()),
                 },
                 WM_MBUTTONDOWN => match self.focused_tab {
-                    Some(index) => tab_bar
-                        .remove_tab(index),
+                    Some(index) => tab_bar.remove_tab(index),
                     None => Ok(()),
                 },
                 WM_LBUTTONDOWN => self.handle_left_click(tab_bar, wparam.0),
