@@ -9,8 +9,6 @@ use windows::core::*;
 
 use super::tab_bar::{TabBar, TabIndex, TabKey, DLL_INSTANCE};
 
-const TAB_BAR_SUBCLASS_UID: usize = 42;
-
 #[derive(Clone)]
 struct FontHolder(HFONT);
 
@@ -50,6 +48,7 @@ pub unsafe fn pwstr_to_string(pwstr: PWSTR) -> Result<String> {
 }
 
 impl TabControl {
+    const TAB_BAR_SUBCLASS_UID: usize = 42;
     pub extern "system" fn tab_bar_proc(
         hwnd: HWND,
         message: u32,
@@ -61,6 +60,21 @@ impl TabControl {
         let obj = ref_data as *mut TabControl;
         let obj = unsafe { &mut *obj };
         obj.window_procedure(hwnd, message, wparam, lparam)
+    }
+
+    const TOOL_BAR_SUBCLASS_UID: usize = 43;
+    pub extern "system" fn tool_bar_proc(
+        hwnd: HWND,
+        umsg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _uid_subclass: usize,
+        _ref_data: usize,
+    ) -> LRESULT {
+        if umsg == WM_RBUTTONUP {
+            return LRESULT(0);
+        }
+        unsafe { DefSubclassProc(hwnd, umsg, wparam, lparam) }
     }
 
     pub fn new(parent_handle: HWND, tab_bar: Weak<TabBar>, dark_mode: bool) -> Box<TabControl> {
@@ -113,12 +127,20 @@ impl TabControl {
             SetWindowSubclass(
                 handle,
                 Some(TabControl::tab_bar_proc),
-                TAB_BAR_SUBCLASS_UID,
+                Self::TAB_BAR_SUBCLASS_UID,
                 &*new as *const TabControl as usize,
             )
-            .as_bool()
-            .then(|| ())
             .expect("failed to install subclass");
+        }
+
+        unsafe {
+            SetWindowSubclass(
+                parent_handle,
+                Some(TabControl::tool_bar_proc),
+                Self::TOOL_BAR_SUBCLASS_UID,
+                0,
+            )
+            .expect("failed to install subclass")
         }
         new
     }
@@ -461,7 +483,7 @@ impl TabControl {
                     None => Ok(()),
                 },
                 WM_LBUTTONDOWN => self.handle_left_click(tab_bar, wparam.0),
-                WM_RBUTTONDOWN => return LRESULT(self.create_popup_menu().is_ok() as _),
+                WM_RBUTTONUP => return LRESULT(self.create_popup_menu().is_ok() as _),
                 WM_MOUSEMOVE => unsafe {
                     let x = (lparam.0 & 0xffff) as i16;
                     let y = ((lparam.0 >> 16) & 0xffff) as i16;
