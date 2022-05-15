@@ -472,7 +472,7 @@ impl TabControl {
             };
 
             if result.is_err() {
-                log::error!("Error handling event {:?}", result);
+                log::error!("Error handling event:{:?} error:{:?}", message, result);
                 return LRESULT(0);
             }
         }

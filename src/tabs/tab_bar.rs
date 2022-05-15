@@ -241,8 +241,7 @@ impl TabBar {
 
     pub fn clone_tab(&self, index: TabIndex) -> Result<()> {
         let tab = self.get_tab(index).ok_or(E_FAIL)?.clone();
-        self.add_tab(tab.current_path, index + 1)?;
-        Err(E_FAIL.into())
+        self.add_tab(tab.current_path, index + 1)
     }
 
     pub fn new_window(&self, path: TabPath) -> Result<()> {
