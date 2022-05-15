@@ -34,8 +34,8 @@ struct TabBar_ {
     tabs: HashMap<TabKey, Tab>,
     tab_key_counter: TabKey,
 
-    tab_control: Option<Box<TabControl>>,
-    explorer_subclass: Option<Box<ExplorerSubclass>>,
+    tab_control: Box<TabControl>,
+    _explorer_subclass: Box<ExplorerSubclass>,
     travel_toolbar: TravelBarControl,
 
     explorer: IShellBrowser,
@@ -80,22 +80,18 @@ impl TabBar {
         settings: Settings,
         is_main: bool,
     ) -> Rc<TabBar> {
-        let new = TabBar_ {
-            tabs: Default::default(),
-            tab_key_counter: 0,
-            tab_control: None,
-            travel_toolbar: TravelBarControl::new(travel_toolbar_handle),
-            explorer_subclass: None,
-            explorer: browser,
-            explorer_handle,
-            is_main,
-        };
-        let new = Rc::new(TabBar(RefCell::new(new)));
-        let tab_control = TabControl::new(parent, Rc::downgrade(&new), settings.dark_mode);
-        new.0.borrow_mut().tab_control = Some(tab_control);
-        new.0.borrow_mut().explorer_subclass =
-            Some(ExplorerSubclass::new(explorer_handle, Rc::downgrade(&new)));
-        new
+        Rc::new_cyclic(|weak| {
+            TabBar(RefCell::new(TabBar_ {
+                tabs: Default::default(),
+                tab_key_counter: 0,
+                tab_control: TabControl::new(parent, weak.clone(), settings.dark_mode),
+                travel_toolbar: TravelBarControl::new(travel_toolbar_handle),
+                _explorer_subclass: ExplorerSubclass::new(explorer_handle, weak.clone()),
+                explorer: browser,
+                explorer_handle,
+                is_main,
+            }))
+        })
     }
 
     pub fn is_main(&self) -> bool {
@@ -106,7 +102,7 @@ impl TabBar {
         self.tab_control().handle
     }
     fn tab_control(&self) -> Box<TabControl> {
-        return self.0.borrow().tab_control.as_ref().unwrap().clone();
+        return self.0.borrow().tab_control.clone();
     }
 
     fn get_tab(&self, index: TabIndex) -> Option<RefMut<Tab>> {
@@ -234,7 +230,7 @@ impl TabBar {
     pub fn toggle_dark_mode(&self) {
         log::info!("toggle dark mode");
         let mut mut_self = self.0.borrow_mut();
-        let dark_mode_ref: &mut bool = &mut mut_self.tab_control.as_mut().unwrap().dark_mode;
+        let dark_mode_ref: &mut bool = &mut mut_self.tab_control.dark_mode;
         *dark_mode_ref = !*dark_mode_ref;
     }
 
